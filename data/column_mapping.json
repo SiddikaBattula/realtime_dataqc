@@ -1,0 +1,118 @@
+{
+    "DEPTH": [
+        "TOT_DPT_MD",
+        "DEPTH",
+        "TOTAL_DEPTH",
+        "HOLE_DEPTH"
+    ],
+    "BIT_DPT_MD": [
+        "BIT_DPT_MD",
+        "BIT_DEPTH",
+        "BITDEPTH"
+    ],
+    "TIME": [
+        "Rdtime",
+        "TIME",
+        "TIMESTAMP",
+        "DATETIME"
+    ],
+    "SPP": [
+        "SPP",
+        "SPP_AVG",
+        "SPP_TOT",
+        "STP_PRS_AVG",
+        "TOTAL_SPP"
+    ],
+    "RPM": [
+        "RPM",
+        "TotalRPM",
+        "ROT_SPEED",
+        "Total_RPM"
+    ],
+    "SPM": [
+        "SPM",
+        "TotalSPM",
+        "TOT_SPM",
+        "MP1_SPM"
+    ],
+    "MP2_SPM": [
+        "MP2_SPM"
+    ],
+    "HOOKLOAD": [
+        "HOOKLOAD",
+        "HOOKLOAD_AVG",
+        "Hookload",
+        "HKLD"
+    ],
+    "WOB": [
+        "WOB",
+        "WOB_AVG",
+        "WEIGHT_ON_BIT"
+    ],
+    "MW_IN": [
+        "MW_IN",
+        "DENS_IN"
+    ],
+    "MW_OUT": [
+        "MW_OUT",
+        "DENS_OUT"
+    ],
+    "ROP": [
+        "ROP",
+        "ROP_AVG"
+    ],
+    "TA": [
+        "TOT_ALKANE",
+        "TA"
+    ],
+    "TG": [
+        "Total_Gas",
+        "TG",
+        "TOTAL_GAS"
+    ],
+    "ROT_SPEED": [
+        "ROT_SPEED"
+    ],
+    "TEMP_IN": [
+        "Temp_In",
+        "TEMP_IN"
+    ],
+    "TEMP_OUT": [
+        "TEMP_OUT",
+        "Temp_Out"
+    ],
+    "H2S": [
+        "H2S",
+        "H2S1",
+        "H2S1_AVG"
+    ],
+    "LEL": [
+        "LEL"
+    ],
+    "Co2": [
+        "Co2",
+        "Co2_1",
+        "CO2"
+    ],
+    "FLOW_IN": [
+        "FLOW_IN"
+    ],
+    "PitSumVol1": [
+        "PitSumVol1",
+        "PIT_SUM_VOL1"
+    ],
+    "RETURNS": [
+        "RETURNS",
+        "FLOW_OUT"
+    ],
+    "ROT_TORQUE_AVG": [
+        "ROT_TORQUE_AVG",
+        "TORQUE_AVG"
+    ],
+    "CONDUCT_IN": [
+        "CONDUCT_IN"
+    ],
+    "CONDUCT_OUT": [
+        "CONDUCT_OUT"
+    ]
+}

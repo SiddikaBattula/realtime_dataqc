@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DataQC Well Alert Monitor</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+
+<body>
+    <header class="navbar">
+        <div class="logo">
+            <i class="fa-solid fa-bore-hole"></i>
+            <span>DataQC <strong>Alert Monitor</strong></span>
+        </div>
+        <div class="nav-right">
+            <div class="system-status">
+                <span class="status-dot online"></span> API Status: <span id="api-status-text">Connected</span>
+            </div>
+            <button id="open-settings-btn" class="btn btn-settings">
+                <i class="fa-solid fa-gear"></i> Settings
+            </button>
+        </div>
+    </header>
+
+    <main class="container">
+        <section class="wells-header">
+            <h3>Active Monitoring Panels (<span id="well-count">0</span>)</h3>
+        </section>
+
+        <div id="wells-grid" class="wells-grid">
+            <!-- Dynamic well cards rendered here -->
+        </div>
+    </main>
+
+    <!-- Settings Modal Popup -->
+    <div id="settings-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fa-solid fa-sliders"></i> Well Management</h2>
+                <button id="close-settings-btn" class="modal-close-btn">&times;</button>
+            </div>
+            <form id="add-well-form" class="well-form">
+                <div class="input-group">
+                    <label for="dbName">Database Name</label>
+                    <input type="text" id="dbName" placeholder="Well Name" required>
+                </div>
+                <div class="input-group">
+                    <label for="ipAddress">IP Address</label>
+                    <input type="text" id="ipAddress" placeholder="IP address" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fa-solid fa-plus"></i> Add Well
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>

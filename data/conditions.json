@@ -1,0 +1,20 @@
+{
+    "TA_TG": {
+        "duration_seconds": 90
+    },
+    "SPP": {
+        "percentage_change": 1,
+        "duration_seconds": 5
+    },
+    "SPM": {
+        "percentage_change": 1,
+        "duration_seconds": 5
+    },
+    "ROP": {
+        "percentage_change": 20,
+        "duration_seconds": 5
+    },
+    "HOOKLOAD": {
+        "duration_seconds": 30
+    }
+}
