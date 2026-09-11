@@ -1,15 +1,27 @@
-
 """
-Realtime QC checks.
+Realtime QC checks - the rules that turn one reading into a list of alerts.
 
-The check logic is identical to the original validate_realtime_data():
-SPP, TotalSPM and ROP each keep their own baseline + timestamp and are
-written out as separate blocks. Alert strings are byte-for-byte the same.
+One RealtimeValidator per well. It holds the state the change checks need
+(the previous SPP, SPM, ROP and HOOKLOAD readings and when each was taken),
+so it cannot be shared between wells - build one per agent.
 
-Only two things changed:
-  * state lives on the instance instead of module globals (so it can be
-    reset when the source table is switched, and unit-tested)
-  * parameter lookup goes through ColumnMapper's logical names
+Seven checks run on every reading, in this order:
+
+  1. activity      DRILLING or RIH, from hole depth minus bit depth, then
+                   every parameter activity.json marks 1 must be above 0
+  2. ranges        each parameter inside its min/max from ranges.json,
+                   after `factor` converts it into the limits' unit
+  3. TA > TG       alert once TA has been above TG for TA_TG.duration_seconds
+  4. SPP           percentage move over SPP.duration_seconds, either direction
+  5. SPM           the same, for total pump strokes per minute
+  6. ROP           the same, but an increase only - a drop to zero is normal
+                   whenever the bit comes off bottom
+  7. HOOKLOAD      alert when the value has not moved at all for
+                   HOOKLOAD.duration_seconds, which means a stalled feed
+
+Rules come from data/*.json and are re-read when those files change, without
+a restart. Parameters are referred to by logical name throughout (SPP, ROP,
+HOOKLOAD ...); ColumnMapper is what turns those into this table's columns.
 """
 
 from config import Config
@@ -20,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 from logger import get_logger
-from column_mapper import ColumnMapper
+from column_mapper import ColumnMapper, to_number
 
 
 log = get_logger(__name__)
@@ -89,15 +101,6 @@ class ValidationResult:
     rop_percentage: float = 0.0
     activity: str = None
     normalized: dict = field(default_factory=dict)
-
-    def as_tuple(self):
-        """Original return signature."""
-        return (
-            self.alerts,
-            self.spp_percentage,
-            self.totalspm_percentage,
-            self.rop_percentage,
-        )
 
 
 class RealtimeValidator:
@@ -249,6 +252,33 @@ class RealtimeValidator:
             log.info("Rule files audited: all parameters are present in column_mapping.json")
 
     # ------------------------------------------------------------------
+    def _apply_factor(self, param, value, factor):
+        """
+        The reading converted into the unit its limits are written in.
+
+        `factor` in ranges.json is a multiplier: the stored value is multiplied
+        by it before being compared, and the converted number is what the alert
+        quotes. Leave it out and the column is compared as it is stored.
+
+        A factor that is not a usable number is reported and ignored rather
+        than allowed to skip the check.
+        """
+        if factor is None:
+            return value
+
+        multiplier = to_number(factor)
+
+        if multiplier is None or multiplier == 0:
+            log.error(
+                "ranges.json: '%s' has factor %r, which is not a usable "
+                "multiplier - comparing the raw value instead",
+                param, factor,
+            )
+            return value
+
+        return round(value * multiplier, 4)
+
+    # ------------------------------------------------------------------
     def detect_activity(self, data, raise_alert, date_str):
 
         total_depth = data.get("DEPTH")
@@ -344,19 +374,44 @@ class RealtimeValidator:
             if value is None:
                 continue
 
-            min_val = limits["min"]
-            max_val = limits["max"]
+            # min, max and factor are tolerated as strings in the file
+            # ("60"), so they are coerced here rather than compared raw -
+            # comparing a float against a str is a TypeError, and it would
+            # take down the whole reading, not just this one check.
+            min_val = to_number(limits.get("min"))
+            max_val = to_number(limits.get("max"))
+
+            if min_val is None or max_val is None:
+                log.error(
+                    "ranges.json: '%s' has a min/max that is not a number "
+                    "(%r / %r) - range check skipped",
+                    param, limits.get("min"), limits.get("max"),
+                )
+                continue
+
+            # Compared as floats, quoted as they are written in the file, so a
+            # limit of 200 still reads "200" in the alert and not "200.0".
+            min_text = limits["min"]
+            max_text = limits["max"]
+
             unit = limits.get("unit", "")
+
+            # `factor` converts the stored reading into the unit the limits are
+            # written in, before either is compared. ROP is the reason it
+            # exists: the table stores it in one unit and ranges.json is in
+            # m/hr. Without this the limits were being applied to the raw
+            # column, which is the unit they were never written for.
+            value = self._apply_factor(param, value, limits.get("factor"))
 
             if value < min_val:
                 raise_alert(
-                    f"[{date_str}] {param} - {value} {unit} is below minimum limit {min_val}{unit} BD-{depth}",
+                    f"[{date_str}] {param} - {value} {unit} is below minimum limit {min_text}{unit} BD-{depth}",
                     param,
                 )
 
             elif value > max_val:
                 raise_alert(
-                    f"[{date_str}] {param} - {value} {unit} is above maximum limit {max_val}{unit}  BD-{depth}",
+                    f"[{date_str}] {param} - {value} {unit} is above maximum limit {max_text}{unit}  BD-{depth}",
                     param,
                 )
 
@@ -518,6 +573,47 @@ class RealtimeValidator:
                     self.previous_rop_time = current_time
 
                     rop_percentage = round(percent_change, 2)
+        # ------------------------------------------------------------------
+        # 7. Hookload unchanged
+        #
+        # A hookload that does not move at all is the sign of a stalled feed:
+        # the rig is still sending rows but the values in them are frozen.
+        # ------------------------------------------------------------------
+        hookload = normalized_data.get("HOOKLOAD")
+
+        if hookload is not None:
+
+            current_time = datetime.now()
+
+            # First reading
+            if self.previous_hookload is None:
+                self.previous_hookload = hookload
+                self.previous_hookload_time = current_time
+
+            elif hookload == self.previous_hookload:
+
+                elapsed = (
+                    current_time - self.previous_hookload_time
+                ).total_seconds()
+
+                if elapsed >= self.hookload_duration:
+                    raise_alert(
+                        f"[{date_str}] Please check for data TS. HOOKLOAD has "
+                        f"remained unchanged for {int(elapsed)} seconds",
+                        "HOOKLOAD",
+                    )
+
+                    # Reset the timer so the alert does not fire every second
+                    # for as long as the value stays stuck.
+                    self.previous_hookload_time = current_time
+
+            else:
+                # Value moved -> start measuring again from here.
+                self.previous_hookload = hookload
+                self.previous_hookload_time = current_time
+
+        # ------------------------------------------------------------------
+
         self._log_reading(
             activity, depth, ta, tg,
             spp_percentage, totalspm_percentage, rop_percentage,
@@ -533,40 +629,6 @@ class RealtimeValidator:
             normalized=normalized_data,
         )
 
-        # ------------------------------------------------------------------
-        # 7. Hookload unchanged
-        # ------------------------------------------------------------------
-        hookload = normalized_data.get("HOOKLOAD")
-
-        if hookload is not None:
-
-            current_time = datetime.now()
-
-            # First reading
-            if self.previous_hookload is None:
-                self.previous_hookload = hookload
-                self.previous_hookload_time = current_time
-
-            else:
-                elapsed = (
-                    current_time - self.previous_hookload_time
-                ).total_seconds()
-
-                # Hookload stayed exactly the same
-                if hookload == self.previous_hookload:
-
-                    if elapsed >= self.hookload_duration:
-                        raise_alert(
-                            f"[{date_str}] Please check for data TS. HOOKLOAD has remained unchanged for {int(elapsed)} seconds",
-                        )
-
-                        # Reset timer so alert doesn't fire every second
-                        self.previous_hookload_time = current_time
-
-                else:
-                    # Value changed -> start monitoring again
-                    self.previous_hookload = hookload
-                    self.previous_hookload_time = current_time
 
     # ------------------------------------------------------------------
     # Logging
@@ -671,20 +733,13 @@ class RealtimeValidator:
         else:
             alert_log.info("%s | still clear after %ds", summary, held)
 
-    # ------------------------------------------------------------------
-    def validate_realtime_data(self, data: dict):
-        """
-        Original signature.
-        Returns: (alerts, spp_percentage, totalspm_percentage, rop_percentage)
-        """
-        return self.validate(data).as_tuple()
-
     def reset_state(self):
         """Clear timers/baselines - use when the source table is switched."""
         self.ta_gt_tg_start = None
         self.previous_spp = self.previous_spp_time = None
         self.previous_totalspm = self.previous_totalspm_time = None
         self.previous_rop = self.previous_rop_time = None
+        self.previous_hookload = self.previous_hookload_time = None
         self._last_fingerprint = None
         self._unchanged_since = self._last_logged = None
         self._last_activity = None
@@ -692,90 +747,25 @@ class RealtimeValidator:
 
 
 # ----------------------------------------------------------------------
-# Backwards-compatible module-level entry point.
-#
-# Lets older code keep doing:
-#     from validation_realtime import validate_realtime_data
-#     alerts, spp_pct, spm_pct, rop_pct = validate_realtime_data(row)
-#
-# The validator is built lazily on the first row and the column mapping is
-# resolved against that row's keys (SELECT * gives every column of the table).
-# Prefer building RealtimeValidator yourself in the agent: that resolves the
-# mapping at startup, so a missing critical column fails immediately instead
-# of on the first row.
+# Building one
 # ----------------------------------------------------------------------
 
-_VALIDATOR = None
-
-
-def get_validator(sample_row=None):
-    """Return the process-wide validator, building it on first use."""
-    global _VALIDATOR
-
-    if _VALIDATOR is None:
-        if not sample_row:
-            raise RuntimeError(
-                "get_validator() needs a sample row on first call so the column "
-                "mapping can be resolved against the table"
-            )
-
-        mapper = ColumnMapper.from_file(
-            Config.COLUMN_MAP_FILE
-        )
-        mapper.resolve(list(sample_row.keys()))
-
-        _VALIDATOR = RealtimeValidator(
-            mapper=mapper,
-            ranges=load_json(Config.RANGES_FILE, "ranges"),
-            activity_rules=load_json(Config.ACTIVITY_FILE, "activity"),
-            conditions=load_json(Config.CONDITIONS_FILE, "conditions"),
-            drilling_criteria=Config.DRILLING_CRITERIA,
-        )
-        log.info("Validator initialised from first row (%d columns)", len(sample_row))
-
-    return _VALIDATOR
-
-
-def validate_realtime_data(data: dict):
-    """
-    Original signature.
-    Returns: (alerts, spp_percentage, totalspm_percentage, rop_percentage)
-    """
-    return get_validator(data).validate(data).as_tuple()
-
-
-def reset_validator():
-    """Drop the singleton - call this if the source table changes at runtime."""
-    global _VALIDATOR
-    _VALIDATOR = None
-
-
-
-    
-
 def build_validator(sample_row):
+    """
+    A validator for one well, with the column mapping resolved against it.
 
-    mapper = ColumnMapper.from_file(
-        Config.COLUMN_MAP_FILE
-    )
-
-    mapper.resolve(
-        list(sample_row.keys())
-    )
+    `sample_row` is the first row read from that well's table: SELECT * gives
+    every column, which is what the mapping is matched against. Resolving here
+    rather than on the first check means a rig whose columns are named
+    differently is reported at startup.
+    """
+    mapper = ColumnMapper.from_file(Config.COLUMN_MAP_FILE)
+    mapper.resolve(list(sample_row.keys()))
 
     return RealtimeValidator(
         mapper=mapper,
-        ranges=load_json(
-            Config.RANGES_FILE,
-            "ranges"
-        ),
-        activity_rules=load_json(
-            Config.ACTIVITY_FILE,
-            "activity"
-        ),
-        conditions=load_json(
-            Config.CONDITIONS_FILE,
-            "conditions"
-        ),
+        ranges=load_json(Config.RANGES_FILE, "ranges"),
+        activity_rules=load_json(Config.ACTIVITY_FILE, "activity"),
+        conditions=load_json(Config.CONDITIONS_FILE, "conditions"),
         drilling_criteria=Config.DRILLING_CRITERIA,
     )

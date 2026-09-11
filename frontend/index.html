@@ -1,64 +1,127 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DataQC Well Alert Monitor</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>RealTime DataQC</title>
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="icon" href="logo-default-223x59.png">
 </head>
 
 <body>
-    <header class="navbar">
-        <div class="logo">
-            <i class="fa-solid fa-bore-hole"></i>
-            <span>DataQC <strong>Alert Monitor</strong></span>
+    <header class="topbar">
+        <div class="brand">
+            <img class="brand-logo" src="logo-default-223x59.png" alt="OFI India" width="896" height="1153">
+            <span class="brand-text">RealTime DataQC</span>
         </div>
-        <div class="nav-right">
-            <div class="system-status">
-                <span class="status-dot online"></span> API Status: <span id="api-status-text">Connected</span>
+
+        <div class="topbar-right">
+            <div class="link-state" id="link-state" data-state="connecting">
+                <span class="link-dot"></span>
+                <span id="link-text">Connecting</span>
             </div>
-            <button id="open-settings-btn" class="btn btn-settings">
-                <i class="fa-solid fa-gear"></i> Settings
+
+            <button class="btn" id="settings-open" type="button">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 8.9 19a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 5 8.9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9.5a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9.5a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+                </svg>
+                Settings
             </button>
         </div>
     </header>
 
-    <main class="container">
-        <section class="wells-header">
-            <h3>Active Monitoring Panels (<span id="well-count">0</span>)</h3>
-        </section>
+    <main class="wrap">
+        <div class="summary">
+            <span><b id="stat-wells">0</b> wells monitored</span>
+            <i class="summary-sep"></i>
+            <span><b id="stat-alerts">0</b> active alerts</span>
+            <i class="summary-sep"></i>
+            <span class="summary-faint" id="stat-updated">—</span>
+        </div>
 
-        <div id="wells-grid" class="wells-grid">
-            <!-- Dynamic well cards rendered here -->
+        <section class="grid" id="grid"></section>
+
+        <div class="empty" id="empty">
+            <svg class="empty-mark" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 2 4 7v10l8 5 8-5V7z" />
+            </svg>
+            <h2>No wells being monitored</h2>
+            <p>Open <b>Settings</b> and add a well by its database name and IP address.</p>
+            <button class="btn btn-primary" type="button" data-open-settings>Add the first well</button>
         </div>
     </main>
 
-    <!-- Settings Modal Popup -->
-    <div id="settings-modal" class="modal-overlay">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2><i class="fa-solid fa-sliders"></i> Well Management</h2>
-                <button id="close-settings-btn" class="modal-close-btn">&times;</button>
+    <!-- One well card -->
+    <template id="tpl-well">
+        <article class="well">
+            <header class="well-head">
+                <span class="well-dot"></span>
+                <h2 class="well-name"></h2>
+                <span class="well-count"></span>
+                <button class="well-remove" type="button" title="Stop monitoring this well">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M18 6 6 18M6 6l12 12" />
+                    </svg>
+                </button>
+            </header>
+
+            <ul class="alerts"></ul>
+
+            <div class="well-blank">
+                <span class="well-blank-text"></span>
             </div>
-            <form id="add-well-form" class="well-form">
-                <div class="input-group">
-                    <label for="dbName">Database Name</label>
-                    <input type="text" id="dbName" placeholder="Well Name" required>
-                </div>
-                <div class="input-group">
-                    <label for="ipAddress">IP Address</label>
-                    <input type="text" id="ipAddress" placeholder="IP address" required>
-                </div>
-                <div class="modal-actions">
-                    <button type="submit" class="btn btn-primary">
-                        <i class="fa-solid fa-plus"></i> Add Well
-                    </button>
-                </div>
+
+            <!-- Drag to resize; double-click any of them to go back to default. -->
+            <span class="well-grip" data-dir="e" title="Drag to widen"></span>
+            <span class="well-grip" data-dir="s" title="Drag to make taller"></span>
+            <span class="well-grip" data-dir="se" title="Drag to resize"></span>
+        </article>
+    </template>
+
+    <!-- One grouped alert -->
+    <template id="tpl-alert">
+        <li class="alert">
+            <time class="alert-time"></time>
+            <span class="alert-msg"></span>
+            <span class="alert-repeat"></span>
+        </li>
+    </template>
+
+    <!-- Settings -->
+    <div class="modal" id="modal" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+            <header class="modal-head">
+                <h2 id="modal-title">Add a well</h2>
+                <button class="icon-btn" id="settings-close" type="button" aria-label="Close">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M18 6 6 18M6 6l12 12" />
+                    </svg>
+                </button>
+            </header>
+
+            <form class="modal-form" id="add-well-form" autocomplete="off">
+                <label class="field">
+                    <span>Database name</span>
+                    <input type="text" id="database_name" placeholder="kj-16" required spellcheck="false">
+                </label>
+
+                <label class="field">
+                    <span>IP address</span>
+                    <input type="text" id="ip_address" placeholder="10.0.0.5" required spellcheck="false">
+                </label>
+
+                <p class="field-note">
+                    The agent connects within about five seconds and alerts appear on its card.
+                </p>
+
+                <button class="btn btn-primary btn-block" type="submit" id="add-submit">Start monitoring</button>
             </form>
         </div>
     </div>
+
+    <div class="toasts" id="toasts"></div>
 
     <script src="app.js"></script>
 </body>

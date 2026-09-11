@@ -1,7 +1,7 @@
 [project]
 name = "realtime-dataqc"
 version = "0.1.0"
-description = "Add your description here"
+description = "Realtime data-quality checks on drilling rig telemetry, one agent per well."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,3 +10,6 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "uvicorn>=0.52.4",
 ]
+
+[project.scripts]
+realtime-dataqc = "main:main"

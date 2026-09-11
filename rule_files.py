@@ -44,6 +44,7 @@ REQUIRED_CONDITIONS = {
     "SPP": ("percentage_change", "duration_seconds"),
     "SPM": ("percentage_change", "duration_seconds"),
     "ROP": ("percentage_change", "duration_seconds"),
+    "HOOKLOAD": ("duration_seconds",),
 }
 
 

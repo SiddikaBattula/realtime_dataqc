@@ -1,12 +1,16 @@
 """
 The rule files, editable over HTTP instead of by hand.
 
-Open http://localhost:8002/docs and every endpoint below is a form: fill the
-fields in, press Execute, and the change is checked, backed up and written.
-The agent notices the file changed and picks it up within a second - nothing
-has to be restarted.
+Started by main.py alongside the agent manager. It serves two things: the
+dashboard in frontend/, and the JSON endpoints behind it. Open
+http://localhost:8000 for the dashboard, /docs for the endpoints as forms -
+fill the fields in, press Execute, and the change is checked, backed up and
+written. The agent notices the file changed and picks it up within a second -
+nothing has to be restarted.
 
-Two levels of endpoint, because they answer different questions:
+    wells          POST/GET/DELETE /wells          <- which wells are monitored
+
+    alerts         GET /alerts/{database_name}     <- what that well has raised
 
     one value      PUT /rules/ranges/H2S           <- the everyday change
                    PUT /rules/activity/RIH/WOB
@@ -14,29 +18,33 @@ Two levels of endpoint, because they answer different questions:
 
     whole file     GET/PUT /rules/{name}           <- bulk edits, or a look at
                                                       the file as it stands
-
-Run it with:  python config_api.py
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 from enum import Enum
-
-from fastapi import Body, FastAPI, HTTPException, Path as PathParam, Request
-from pydantic import BaseModel, Field
-import uvicorn
+import json
 import time
 
+from fastapi import Body, FastAPI, HTTPException, Path as PathParam, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+import rule_files
+import well_registry
 from config import Config
 from logger import setup_logging, get_logger
+from rule_files import RuleFileError
 
 setup_logging()
 
 log = get_logger("config-api")
 
-import rule_files
-from rule_files import RuleFileError
-from well_registry import ACTIVE_WELLS
+FRONTEND_DIR = Config.BASE_DIR / "frontend"
+
 
 class WellRequest(BaseModel):
     database_name: str
@@ -81,12 +89,17 @@ class ActivityFlag(BaseModel):
 
 
 class ConditionBlock(str, Enum):
-    """The four blocks the agent reads out of conditions.json."""
+    """The five blocks the agent reads out of conditions.json."""
 
     TA_TG = "TA_TG"
     SPP = "SPP"
     SPM = "SPM"
     ROP = "ROP"
+    HOOKLOAD = "HOOKLOAD"
+
+
+# Blocks that carry a duration and no percentage.
+DURATION_ONLY = {"TA_TG", "HOOKLOAD"}
 
 
 class ChangeCondition(BaseModel):
@@ -124,30 +137,34 @@ async def lifespan(app: FastAPI):
         except RuleFileError as exc:
             log.error("%s cannot be read: %s", name, exc)
 
-    # log.info(
-    #     "Config API ready on http://%s:%s/docs",
-    #     Config.CONFIG_API_HOST,
-    #     Config.CONFIG_API_PORT,
-    # )
+    log.info(
+        "Config API ready on http://%s:%s/docs",
+        Config.CONFIG_API_HOST,
+        Config.CONFIG_API_PORT,
+    )
 
     yield
 
     log.info("Config API stopped")
 
 
-from fastapi.middleware.cors import CORSMiddleware
-
 app = FastAPI(
     title="DataQC rule files",
     lifespan=lifespan,
 )
 
-# Enable CORS for cross-origin frontend requests
+# Serving the dashboard from here makes it same-origin, and none of this
+# applies. It is also normal to serve frontend/ from a separate static server
+# while working on the page ("python -m http.server 5500"), and that is a
+# cross-origin call the browser blocks unless it is told otherwise.
+#
+# allow_credentials stays off: there are no cookies or auth headers to send,
+# and "*" together with credentials is a pairing browsers reject outright.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows requests from any origin/port
-    allow_credentials=True,
-    allow_methods=["*"],  # Allows GET, POST, DELETE, OPTIONS, etc.
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -192,43 +209,46 @@ def _guard(action):
 # add wells and delete
 # ---------------------------------------------------------------------------
 
-@app.post("/wells")
+@app.post("/wells", summary="Start monitoring a well")
 def add_well(well: WellRequest):
+    """
+    The agent manager picks it up within about five seconds.
 
-    ACTIVE_WELLS[well.database_name] = {
-        "database_name": well.database_name,
-        "ip_address": well.ip_address
-    }
+    Sending the same database_name again replaces the address on record; the
+    agent already running keeps the one it connected with until it is removed
+    and added back.
+    """
+    well_registry.add(well.database_name, well.ip_address)
+
+    log.info("Well added: %s (%s)", well.database_name, well.ip_address)
 
     return {
         "message": f"{well.database_name} added",
-        "status": "success"
+        "status": "success",
     }
 
 
-@app.get("/wells")
+@app.get("/wells", summary="Which wells are being monitored")
 def get_wells():
+    wells = well_registry.all_wells()
 
     return {
-        "count": len(ACTIVE_WELLS),
-        "wells": ACTIVE_WELLS
+        "count": len(wells),
+        "wells": wells,
     }
 
 
-@app.delete("/wells/{database_name}")
+@app.delete("/wells/{database_name}", summary="Stop monitoring a well")
 def delete_well(database_name: str):
+    if not well_registry.remove(database_name):
+        raise HTTPException(
+            status_code=404,
+            detail=f"No well called '{database_name}' is being monitored",
+        )
 
-    if database_name in ACTIVE_WELLS:
+    log.info("Well removed: %s", database_name)
 
-        del ACTIVE_WELLS[database_name]
-
-        return {
-            "message": f"{database_name} removed"
-        }
-
-    return {
-        "message": "Well not found"
-    }
+    return {"message": f"{database_name} removed"}
 
 
 
@@ -309,21 +329,22 @@ def set_condition(
     ),
 ):
     """
-    Change how far SPP, SPM or ROP has to move before it is an alert, or how
-    long TA may sit above TG.
+    Change how far SPP, SPM or ROP has to move before it is an alert, how long
+    TA may sit above TG, or how long HOOKLOAD may sit unchanged.
 
-    **TA_TG takes a duration only** - it is not a percentage check, so whatever
-    is in percentage_change is ignored there. The other three need both.
+    **TA_TG and HOOKLOAD take a duration only** - neither is a percentage
+    check, so whatever is in percentage_change is ignored there. The other
+    three need both.
     """
     name = block.value
     ignored = None
 
     entry = {"duration_seconds": condition.duration_seconds}
 
-    if name == "TA_TG":
+    if name in DURATION_ONLY:
         if condition.percentage_change:
             ignored = (
-                "TA_TG is not a percentage check, so percentage_change "
+                f"{name} is not a percentage check, so percentage_change "
                 f"({condition.percentage_change}) was not written."
             )
 
@@ -333,8 +354,8 @@ def set_condition(
                 status_code=400,
                 detail=(
                     f"{name} needs a percentage_change above 0 - it is how far the "
-                    "value has to move before it counts as an alert. Only TA_TG "
-                    "goes without one."
+                    "value has to move before it counts as an alert. Only "
+                    f"{' and '.join(sorted(DURATION_ONLY))} go without one."
                 ),
             )
 
@@ -344,11 +365,15 @@ def set_condition(
         document = rule_files.load("conditions")
         document[name] = entry
 
-        return rule_files.save("conditions", document)
+        saved_document = rule_files.save("conditions", document)
 
-    document = _guard(write)
+        # Echoed from the saved file rather than the form, so a duration typed
+        # as 45 comes back as 45 and not 45.0.
+        return saved_document, saved_document[name]
 
-    saved = _saved("conditions", document, {name: entry})
+    document, written = _guard(write)
+
+    saved = _saved("conditions", document, {name: written})
 
     if ignored:
         saved["ignored"] = ignored
@@ -427,46 +452,89 @@ def replace_rules(
 
 
 
-import json
-from pathlib import Path
-from fastapi import FastAPI, HTTPException
+# ---------------------------------------------------------------------------
+# What the agents have raised
+# ---------------------------------------------------------------------------
 
-# Endpoint to fetch real alerts generated by WellAgent
-@app.get("/alerts/{database_name}", summary="Get active alerts for a well")
-def get_well_alerts(database_name: str):
-    # Matches: Path("output") / self.database_name / "alerts.json"
+@app.get("/alerts/{database_name}", summary="Alerts raised for one well")
+def get_well_alerts(
+    database_name: str,
+    limit: int = Query(
+        200,
+        ge=1,
+        le=5000,
+        description="How many of the most recent alerts to return",
+    ),
+):
+    """
+    The alerts a well's agent has written, newest last.
+
+    A well that was only just added has no file yet - that is an empty list,
+    not an error, because the agent takes a few seconds to start.
+    """
+    # The same relative path the agent writes to in WellAgent.save_alerts. Both
+    # run in this process, so they resolve against the same directory; keeping
+    # the two spellings identical is what stops them drifting apart.
     file_path = Path("output") / database_name / "alerts.json"
-    
+
     if not file_path.exists():
-        return {"status": "success", "alerts": []}
-        
+        return {"database_name": database_name, "count": 0, "alerts": []}
+
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            alerts = json.load(f)
-        return {"status": "success", "alerts": alerts}
-    except Exception as e:
-        log.error("Failed to read alerts for %s: %s", database_name, e)
-        raise HTTPException(status_code=500, detail="Could not read alert log file")
+        with open(file_path, "r", encoding="utf-8") as fh:
+            alerts = json.load(fh)
 
-        
+    except (OSError, ValueError) as exc:
+        log.error("Could not read alerts for %s: %s", database_name, exc)
 
-@app.get("/", summary="Health check")
-def home():
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not read the alert file for '{database_name}'",
+        )
+
+    if not isinstance(alerts, list):
+        raise HTTPException(
+            status_code=500,
+            detail=f"The alert file for '{database_name}' is not a list",
+        )
+
     return {
-        "message": "DataQC rule file API running",
-        "docs": "/docs",
-        "directory": str(Config.DATA_DIR),
+        "database_name": database_name,
+        "count": len(alerts),
+        "alerts": alerts[-limit:],
     }
 
 
+@app.get("/health", summary="Health check")
+def health():
+    return {
+        "message": "DataQC API running",
+        "docs": "/docs",
+        "directory": str(Config.DATA_DIR),
+        "wells": well_registry.count(),
+    }
 
 
+# ---------------------------------------------------------------------------
+# The dashboard
+#
+# Mounted last, and at "/", so every route above is matched first and only what
+# is left over is looked for on disk. Serving it from here rather than opening
+# the file directly is what keeps it on the same origin as the endpoints it
+# calls - no CORS, and one address to remember.
+# ---------------------------------------------------------------------------
 
+if FRONTEND_DIR.is_dir():
 
-# if __name__ == "__main__":
-#     uvicorn.run(
-#         app,
-#         host=Config.CONFIG_API_HOST,
-#         port=Config.CONFIG_API_PORT,
-#         log_config=None,
-#     )
+    @app.get("/", include_in_schema=False)
+    def dashboard():
+        return FileResponse(FRONTEND_DIR / "index.html")
+
+    app.mount(
+        "/",
+        StaticFiles(directory=FRONTEND_DIR, html=True),
+        name="frontend",
+    )
+
+else:
+    log.warning("No frontend/ directory at %s - dashboard not served", FRONTEND_DIR)

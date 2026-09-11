@@ -1,327 +1,1006 @@
+/*
+  DataQC dashboard.
+
+  Built to be read at a glance and from a distance: six wells fit one screen
+  without scrolling, so the card chrome is kept thin and the alert list is
+  sized against the viewport rather than a fixed number of pixels.
+
+  Colour: a violet-to-blue accent carries the brand and the one primary
+  action; status keeps its own three - emerald clear, amber warning, rose
+  critical - and nothing else competes with them.
+
+  Self-contained by design: no web fonts and no icon CDN, because this is
+  served off a rig server that may have no route to the internet.
+*/
+
+:root {
+    --bg: #080A12;
+    --surface: #11141F;
+    --surface-2: #171B29;
+    --surface-3: #1F2435;
+
+    --border: #272D42;
+    --border-soft: #1B2032;
+
+    --text: #EDF0FA;
+    --text-2: #98A0BC;
+    --text-3: #656D8C;
+
+    --accent: #7C6BFF;
+    --accent-2: #3D9EFF;
+
+    --green: #16D9A3;
+    --amber: #FFB224;
+    --red: #FF4D6A;
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+    --radius: 11px;
+    --radius-sm: 7px;
+
+    /*
+      How tall a card's body is. Set as a height, not a max-height: a cap only
+      limits a long list, so a well with four alerts would stay short and the
+      wall of cards would be ragged. Dragging a card's bottom edge overrides
+      this on that card alone.
+    */
+    --list-h: clamp(200px, 33vh, 420px);
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+    --shadow-lift: 0 6px 22px -10px rgba(0, 0, 0, .85);
+}
+
 * {
-    margin: 0;
-    padding: 0;
     box-sizing: border-box;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+html,
+body {
+    height: 100%;
 }
 
 body {
-    background-color: #0b0f17;
-    color: #e2e8f0;
-    min-height: 100vh;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 13.5px/1.5 var(--sans);
+    letter-spacing: -.005em;
+    -webkit-font-smoothing: antialiased;
 }
 
-/* Header Navbar */
-.navbar {
-    background-color: #111827;
-    border-bottom: 1px solid #1f2937;
-    padding: 0.85rem 1.75rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.logo {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    font-size: 1.25rem;
-    color: #60a5fa;
-}
-
-.nav-right {
-    display: flex;
-    align-items: center;
-    gap: 1.25rem;
-}
-
-.btn-settings {
-    background: #1f2937;
-    color: #e5e7eb;
-    border: 1px solid #374151;
-    padding: 0.45rem 0.85rem;
-    border-radius: 6px;
-}
-
-.btn-settings:hover {
-    background: #374151;
-    color: #fff;
-}
-
-.system-status {
-    font-size: 0.875rem;
-    color: #9ca3af;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.status-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    display: inline-block;
-}
-
-.status-dot.online {
-    background-color: #10b981;
-    box-shadow: 0 0 8px #10b981;
-}
-
-/* Layout */
-.container {
-    max-width: 100%;
-    margin: 0 auto;
-    padding: 1.25rem;
-}
-
-/* Fixed Hidden Modal Popup Overlay */
-.modal-overlay {
-    display: none;
-    /* Strictly hidden by default */
+/* The page's light source: a slow violet-blue wash behind the header. */
+body::before {
+    content: "";
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background: rgba(0, 0, 0, 0.75);
-    backdrop-filter: blur(4px);
-    z-index: 9999;
-    justify-content: center;
-    align-items: center;
+    inset: 0 0 auto;
+    height: 480px;
+    background:
+        radial-gradient(58% 100% at 22% 0%, rgba(124, 107, 255, .16), transparent 68%),
+        radial-gradient(48% 90% at 78% 0%, rgba(61, 158, 255, .11), transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+    animation: drift 22s ease-in-out infinite alternate;
 }
 
-.modal-content {
-    background: #111827;
-    border: 1px solid #374151;
-    border-radius: 8px;
-    padding: 1.5rem;
-    width: 100%;
-    max-width: 480px;
-    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
-    animation: modalFadeIn 0.2s ease-out;
-}
-
-@keyframes modalFadeIn {
-    from {
-        opacity: 0;
-        transform: scale(0.95);
-    }
-
+@keyframes drift {
     to {
-        opacity: 1;
-        transform: scale(1);
+        transform: translateX(4%) scale(1.06);
+        opacity: .78;
     }
 }
 
-.modal-header {
+/* --------------------------------------------------------------- topbar */
+
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
     display: flex;
+    align-items: center;
     justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1.25rem;
-    border-bottom: 1px solid #1f2937;
-    padding-bottom: 0.75rem;
+    gap: 16px;
+    padding: 0 20px;
+    height: 60px;
+    background: rgba(8, 10, 18, .72);
+    backdrop-filter: blur(16px) saturate(160%);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+    border-bottom: 1px solid var(--border-soft);
 }
 
-.modal-header h2 {
-    font-size: 1.1rem;
-    color: #f3f4f6;
+/* A lit hairline under the bar, brightest where the glow is. */
+.topbar::after {
+    content: "";
+    position: absolute;
+    inset: auto 0 -1px;
+    height: 1px;
+    background: linear-gradient(90deg,
+            transparent,
+            rgba(124, 107, 255, .55) 22%,
+            rgba(61, 158, 255, .4) 62%,
+            transparent);
+}
+
+.brand {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 12px;
+    min-width: 0;
 }
 
-.modal-close-btn {
-    background: transparent;
-    border: none;
-    color: #9ca3af;
-    font-size: 1.5rem;
-    cursor: pointer;
+/*
+  The logo's own artwork is dark charcoal on transparency, which would all but
+  disappear against this header - so it sits on a light chip. That keeps the
+  yellow drop and the lettering legible without touching the artwork itself.
+*/
+.brand-logo {
+    height: 40px;
+    width: auto;
+    flex: none;
+    padding: 3px 6px;
+    border-radius: 8px;
+    background: #FFF;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .45);
+}
+
+/* Sized to sit level with the 40px logo beside it rather than under it. */
+.brand-text {
+    font-size: 22px;
+    font-weight: 650;
+    letter-spacing: -.02em;
     line-height: 1;
+    white-space: nowrap;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-.modal-close-btn:hover {
-    color: #f87171;
-}
-
-/* Form Elements */
-.well-form {
+.topbar-right {
     display: flex;
-    flex-direction: column;
-    gap: 1rem;
+    align-items: center;
+    gap: 9px;
 }
 
-.input-group {
+/* Whether this page is still hearing from the API. */
+.link-state {
     display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 11px 5px 9px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(23, 27, 41, .8);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--text-2);
+    white-space: nowrap;
 }
 
-.input-group label {
-    font-size: 0.85rem;
-    color: #9ca3af;
+.link-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-3);
+    flex: none;
 }
 
-.input-group input {
-    background: #1f2937;
-    border: 1px solid #374151;
-    border-radius: 6px;
-    padding: 0.6rem 0.75rem;
-    color: #fff;
-    width: 100%;
-    font-size: 0.95rem;
-    outline: none;
+.link-state[data-state="live"] {
+    color: var(--green);
+    border-color: rgba(22, 217, 163, .3);
 }
 
-.input-group input:focus {
-    border-color: #3b82f6;
+.link-state[data-state="live"] .link-dot {
+    background: var(--green);
+    animation: breathe 2.6s ease-in-out infinite;
 }
 
-.modal-actions {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: 0.5rem;
+.link-state[data-state="down"] {
+    color: var(--red);
+    border-color: rgba(255, 77, 106, .38);
+    background: rgba(255, 77, 106, .09);
 }
+
+.link-state[data-state="down"] .link-dot {
+    background: var(--red);
+}
+
+@keyframes breathe {
+
+    0%,
+    100% {
+        box-shadow: 0 0 0 0 rgba(22, 217, 163, .5);
+    }
+
+    60% {
+        box-shadow: 0 0 0 5px rgba(22, 217, 163, 0);
+    }
+}
+
+/* -------------------------------------------------------------- buttons */
 
 .btn {
-    padding: 0.50rem 1rem;
-    border-radius: 6px;
-    border: none;
-    cursor: pointer;
-    font-weight: 500;
-    font-size: 0.9rem;
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
-    transition: background 0.2s;
+    justify-content: center;
+    gap: 7px;
+    padding: 7px 13px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: rgba(31, 36, 53, .75);
+    color: var(--text);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background .14s, border-color .14s, box-shadow .14s;
 }
 
+.btn:hover {
+    background: var(--surface-3);
+    border-color: #343B54;
+}
+
+.btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/*
+  The one affirmative action. A flat, slightly deepened brand colour - the
+  gradient and glow it used to carry shouted louder than a form button in a
+  dialog needs to.
+*/
 .btn-primary {
-    background: #2563eb;
-    color: #fff;
+    background: #5A51E0;
+    border-color: #5A51E0;
+    color: #FFF;
+    font-weight: 600;
 }
 
 .btn-primary:hover {
-    background: #1d4ed8;
+    background: #6A61EC;
+    border-color: #6A61EC;
 }
 
-.btn-danger-icon {
-    background: transparent;
-    border: none;
-    color: #9ca3af;
-    cursor: pointer;
-    font-size: 1.1rem;
-    padding: 0.25rem;
+.btn-primary:disabled {
+    opacity: .5;
+    cursor: not-allowed;
 }
 
-.btn-danger-icon:hover {
-    color: #f87171;
+.btn-block {
+    width: 100%;
+    padding: 10px;
 }
 
-/* Dashboard Section Header */
-.wells-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.85rem;
+.icon {
+    width: 14px;
+    height: 14px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }
 
-.wells-header h3 {
-    font-size: 1.1rem;
-    color: #f3f4f6;
-}
-
-/* Responsive Grid for well cards */
-.wells-grid {
+.icon-btn {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 1rem;
-    padding-bottom: 1rem;
+    place-items: center;
+    width: 29px;
+    height: 29px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-3);
+    cursor: pointer;
+    transition: background .14s, color .14s;
 }
 
-/* Well Card Terminal Window */
-.well-card {
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 8px;
-    display: flex;
-    flex-direction: column;
-    height: 380px;
-    overflow: hidden;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+.icon-btn:hover {
+    background: var(--surface-3);
+    color: var(--text);
 }
 
-.well-card-header {
-    padding: 0.65rem 1rem;
-    background: #161b22;
-    border-bottom: 1px solid #30363d;
+/* ----------------------------------------------------------------- page */
+
+.wrap {
+    position: relative;
+    z-index: 1;
+    max-width: 1800px;
+    margin: 0 auto;
+    padding: 12px 18px 22px;
+}
+
+.summary {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 13px;
+    font-size: 12px;
+    color: var(--text-2);
 }
 
-.well-info h4 {
-    margin: 0;
-    color: #58a6ff;
-    font-size: 1.05rem;
-    font-weight: 600;
-    font-family: Consolas, Monaco, "Andale Mono", "Ubuntu Mono", monospace;
+.summary b {
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 650;
+    letter-spacing: -.02em;
 }
 
-/* Scrollable Log Output Container */
-.alerts-container {
+.summary-sep {
+    width: 1px;
+    height: 11px;
+    background: var(--border);
+}
+
+.summary-faint {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-3);
+}
+
+/*
+  Sized so six wells land on one screen: narrow enough that a 1080p display
+  fits five or six across, and at worst two rows.
+*/
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 13px;
+    align-items: start;
+}
+
+/* ----------------------------------------------------------- well card */
+
+.well {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius);
+    background: linear-gradient(165deg, rgba(31, 36, 53, .85), var(--surface) 58%);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    transition: border-color .18s, box-shadow .18s;
+    animation: rise .26s ease both;
+}
+
+.well:hover {
+    border-color: var(--border);
+    box-shadow: var(--shadow-lift);
+}
+
+/* A critical card glows, so it is findable in a wall of them. */
+.well[data-tone="critical"] {
+    border-color: rgba(255, 77, 106, .35);
+    box-shadow: var(--shadow), 0 0 20px -8px rgba(255, 77, 106, .55);
+}
+
+.well[data-tone="warn"] {
+    border-color: rgba(255, 178, 36, .24);
+}
+
+@keyframes rise {
+    from {
+        opacity: 0;
+        transform: translateY(5px);
+    }
+}
+
+.well-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 11px 12px 15px;
+    border-bottom: 1px solid var(--border-soft);
+}
+
+.well-dot {
+    width: 7px;
+    height: 7px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 0 3px rgba(22, 217, 163, .14), 0 0 8px rgba(22, 217, 163, .5);
+}
+
+.well[data-tone="warn"] .well-dot {
+    background: var(--amber);
+    box-shadow: 0 0 0 3px rgba(255, 178, 36, .14), 0 0 8px rgba(255, 178, 36, .5);
+}
+
+.well[data-tone="critical"] .well-dot {
+    background: var(--red);
+    box-shadow: 0 0 0 3px rgba(255, 77, 106, .16), 0 0 9px rgba(255, 77, 106, .6);
+    animation: breathe-crit 2s ease-in-out infinite;
+}
+
+@keyframes breathe-crit {
+
+    0%,
+    100% {
+        box-shadow: 0 0 0 3px rgba(255, 77, 106, .16), 0 0 9px rgba(255, 77, 106, .6);
+    }
+
+    60% {
+        box-shadow: 0 0 0 8px rgba(255, 77, 106, 0), 0 0 9px rgba(255, 77, 106, .6);
+    }
+}
+
+.well-name {
     flex: 1;
-    padding: 0.75rem;
+    min-width: 0;
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 13.5px;
+    font-weight: 650;
+    letter-spacing: .01em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: default;
+}
+
+.well-count {
+    flex: none;
+    padding: 3px 8px;
+    border-radius: 5px;
+    background: var(--surface-3);
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: .02em;
+    color: var(--text-2);
+    white-space: nowrap;
+}
+
+.well[data-tone="warn"] .well-count {
+    color: var(--amber);
+    background: rgba(255, 178, 36, .13);
+}
+
+.well[data-tone="critical"] .well-count {
+    color: var(--red);
+    background: rgba(255, 77, 106, .14);
+}
+
+.well-remove {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 25px;
+    height: 25px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-3);
+    cursor: pointer;
+    transition: background .14s, color .14s, border-color .14s;
+}
+
+.well-remove:hover {
+    background: var(--surface-3);
+    color: var(--text);
+}
+
+/* Second click confirms - no browser dialog, no extra markup. */
+.well-remove[data-armed] {
+    width: auto;
+    padding: 0 8px;
+    border-color: rgba(255, 77, 106, .45);
+    background: rgba(255, 77, 106, .14);
+    color: var(--red);
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+}
+
+.well-remove[data-armed] .icon {
+    display: none;
+}
+
+.well-remove[data-armed]::after {
+    content: "Stop?";
+}
+
+/* -------------------------------------------------------------- alerts */
+
+/*
+  Against the viewport, not a fixed height: six cards stay on one screen on a
+  laptop, and the list grows into the room a larger display has.
+*/
+.alerts {
+    list-style: none;
+    margin: 0;
+    padding: 3px 0;
+    height: var(--list-h);
     overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: #2E3550 transparent;
+}
+
+.alerts:empty {
+    display: none;
+}
+
+/* While a card is being dragged, skip the row animation - new rows arriving
+   mid-drag should not slide about under the cursor. */
+.well[data-resizing] .alert {
+    animation: none;
+}
+
+.alerts::-webkit-scrollbar {
+    width: 9px;
+}
+
+.alerts::-webkit-scrollbar-thumb {
+    background: #2E3550;
+    border-radius: 5px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+}
+
+.alerts::-webkit-scrollbar-thumb:hover {
+    background: #3C4569;
+    background-clip: content-box;
+}
+
+/* One line: the time, then the agent's own sentence. */
+.alert {
     display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-    font-family: Consolas, Monaco, "Andale Mono", "Ubuntu Mono", monospace;
+    align-items: baseline;
+    gap: 8px;
+    padding: 7px 12px 7px 11px;
+    border-left: 2px solid transparent;
+    animation: rise .2s ease both;
 }
 
-.alerts-container::-webkit-scrollbar {
-    width: 6px;
+.alert+.alert {
+    border-top: 1px solid rgba(27, 32, 50, .8);
 }
 
-.alerts-container::-webkit-scrollbar-thumb {
-    background: #30363d;
-    border-radius: 3px;
+.alert[data-tone="critical"] {
+    border-left-color: var(--red);
 }
 
-/* Log Entries */
-.log-entry {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
-    font-size: 0.92rem;
+.alert[data-tone="warn"] {
+    border-left-color: var(--amber);
+}
+
+.alert[data-tone="info"] {
+    border-left-color: var(--accent-2);
+}
+
+.alert-time {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+}
+
+.alert-msg {
+    flex: 1;
+    min-width: 0;
+    font-size: 13.5px;
     line-height: 1.45;
-}
-
-.log-time {
-    color: #8b949e;
-    font-size: 0.8rem;
-    font-weight: bold;
-    user-select: none;
-}
-
-.log-text {
+    color: #D6DAEA;
     word-break: break-word;
-    font-weight: 500;
 }
 
-.log-entry.critical .log-text {
-    color: #ff6b6b;
+.alert[data-tone="critical"] .alert-msg {
+    color: #FFDDE3;
 }
 
-.log-entry.warning .log-text {
-    color: #fca510;
+.alert-repeat {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 650;
+    color: var(--text-3);
 }
 
-.empty-alerts {
-    color: #8b949e;
-    font-size: 0.9rem;
-    font-family: Consolas, Monaco, "Andale Mono", "Ubuntu Mono", monospace;
-    padding: 0.75rem 0;
+/* Card body when there is nothing wrong. */
+.well-blank {
+    display: none;
+    align-items: center;
+    gap: 9px;
+    min-height: var(--list-h);
+    padding: 20px 14px;
+    font-size: 13px;
+    color: var(--text-3);
+}
+
+.well-blank::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: breathe-soft 2.2s ease-in-out infinite;
+}
+
+@keyframes breathe-soft {
+
+    0%,
+    100% {
+        opacity: .3;
+    }
+
+    50% {
+        opacity: 1;
+    }
+}
+
+.well[data-blank] .well-blank {
+    display: flex;
+}
+
+
+/* ------------------------------------------------------ resize handles */
+
+/*
+  Three invisible strips along the card's own edges. They only show
+  themselves on hover, so a wall of cards stays quiet until someone reaches
+  for one.
+*/
+.well-grip {
+    position: absolute;
+    z-index: 4;
+    touch-action: none;
+}
+
+.well-grip[data-dir="e"] {
+    top: 0;
+    right: 0;
+    width: 7px;
+    height: 100%;
+    cursor: ew-resize;
+}
+
+.well-grip[data-dir="s"] {
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    height: 7px;
+    cursor: ns-resize;
+}
+
+.well-grip[data-dir="se"] {
+    right: 0;
+    bottom: 0;
+    width: 16px;
+    height: 16px;
+    cursor: nwse-resize;
+}
+
+/* The edge lights up under the cursor. */
+.well-grip[data-dir="e"]::after,
+.well-grip[data-dir="s"]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity .14s;
+}
+
+.well-grip[data-dir="e"]::after {
+    left: auto;
+    right: 0;
+    width: 2px;
+}
+
+.well-grip[data-dir="s"]::after {
+    top: auto;
+    bottom: 0;
+    height: 2px;
+}
+
+.well:hover .well-grip:hover::after,
+.well[data-resizing] .well-grip::after {
+    opacity: .9;
+}
+
+/* The corner keeps a faint grip mark, so the card says it can be resized. */
+.well-grip[data-dir="se"]::after {
+    content: "";
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 7px;
+    height: 7px;
+    border-right: 2px solid var(--text-3);
+    border-bottom: 2px solid var(--text-3);
+    border-radius: 0 0 3px 0;
+    opacity: .45;
+    transition: opacity .14s, border-color .14s;
+}
+
+.well:hover .well-grip[data-dir="se"]::after {
+    opacity: .9;
+}
+
+.well-grip[data-dir="se"]:hover::after,
+.well[data-resizing="se"] .well-grip[data-dir="se"]::after {
+    border-color: var(--accent);
+    opacity: 1;
+}
+
+/* A resized card is outlined while the pointer is down. */
+.well[data-resizing] {
+    border-color: rgba(124, 107, 255, .55);
+    box-shadow: var(--shadow-lift), 0 0 0 1px rgba(124, 107, 255, .28);
+}
+
+/* Nothing on the page should select while an edge is being dragged. */
+body[data-resizing] {
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: inherit;
+}
+
+/* --------------------------------------------------------- empty state */
+
+.empty {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 5px;
+    padding: 76px 20px;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius);
+    background: linear-gradient(165deg, rgba(31, 36, 53, .55), rgba(17, 20, 31, .8));
+}
+
+.empty[data-show] {
+    display: flex;
+}
+
+.empty-mark {
+    width: 34px;
+    height: 34px;
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.2;
+    stroke-linejoin: round;
+    opacity: .55;
+    margin-bottom: 8px;
+}
+
+.empty h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -.01em;
+}
+
+.empty p {
+    margin: 0 0 16px;
+    font-size: 12.5px;
+    color: var(--text-2);
+}
+
+.empty b {
+    color: var(--text);
+    font-weight: 600;
+}
+
+/* --------------------------------------------------------------- modal */
+
+.modal {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    background: rgba(5, 6, 12, .74);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    animation: fade .16s ease both;
+}
+
+/*
+  `display: grid` above beats the browser's own rule for the hidden
+  attribute, so without this the dialog is on screen at every page load.
+*/
+.modal[hidden] {
+    display: none;
+}
+
+@keyframes fade {
+    from {
+        opacity: 0;
+    }
+}
+
+.modal-card {
+    width: 100%;
+    max-width: 392px;
+    border: 1px solid var(--border);
+    border-radius: 13px;
+    background: linear-gradient(165deg, var(--surface-2), var(--surface));
+    box-shadow: 0 24px 60px -18px rgba(0, 0, 0, .9), 0 0 40px -20px rgba(124, 107, 255, .5);
+    animation: pop .19s cubic-bezier(.2, .9, .3, 1.1) both;
+}
+
+@keyframes pop {
+    from {
+        opacity: 0;
+        transform: translateY(8px) scale(.98);
+    }
+}
+
+.modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 15px 11px 15px 17px;
+    border-bottom: 1px solid var(--border-soft);
+}
+
+.modal-head h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -.01em;
+}
+
+.modal-form {
+    padding: 17px;
+    display: grid;
+    gap: 14px;
+}
+
+.field {
+    display: grid;
+    gap: 6px;
+}
+
+.field span {
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--text-2);
+}
+
+.field input {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: #0A0C14;
+    color: var(--text);
+    font: 13px var(--mono);
+    outline: none;
+    transition: border-color .14s, box-shadow .14s;
+}
+
+.field input::placeholder {
+    color: #454B66;
+}
+
+.field input:focus {
+    border-color: rgba(124, 107, 255, .7);
+    box-shadow: 0 0 0 3px rgba(124, 107, 255, .16);
+}
+
+.field-note {
+    margin: -5px 0 0;
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--text-3);
+}
+
+/* -------------------------------------------------------------- toasts */
+
+.toasts {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 60;
+    display: grid;
+    gap: 8px;
+    justify-items: end;
+}
+
+.toast {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 10px 15px;
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--green);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    box-shadow: 0 10px 30px -12px rgba(0, 0, 0, .9);
+    font-size: 12.5px;
+    animation: slide-in .2s ease both;
+}
+
+.toast[data-tone="error"] {
+    border-left-color: var(--red);
+}
+
+.toast[data-leaving] {
+    animation: slide-out .18s ease both;
+}
+
+@keyframes slide-in {
+    from {
+        opacity: 0;
+        transform: translateX(12px);
+    }
+}
+
+@keyframes slide-out {
+    to {
+        opacity: 0;
+        transform: translateX(12px);
+    }
+}
+
+/* ---------------------------------------------------------- responsive */
+
+@media (max-width: 560px) {
+    .topbar {
+        padding: 0 13px;
+        gap: 10px;
+    }
+
+    .brand-logo {
+        height: 32px;
+    }
+
+    .brand-text {
+        font-size: 17px;
+    }
+
+    .link-state span:last-child {
+        display: none;
+    }
+
+    .link-state {
+        padding: 6px;
+    }
+
+    .wrap {
+        padding: 14px 13px 40px;
+    }
+
+    .grid {
+        grid-template-columns: 1fr;
+    }
+
+    .well {
+        --list-h: 340px;
+    }
+
+    .summary-faint {
+        margin-left: 0;
+        flex-basis: 100%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+        animation: none !important;
+        transition: none !important;
+    }
 }

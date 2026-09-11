@@ -8,3 +8,13 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local configuration - credentials live here, never commit it.
+# Copy .env.example to .env and fill it in.
+.env
+
+# Runtime output: rotated logs, per-well alert files, rule-file backups.
+logs/
+output/
+data/*.json.bak
+data/*.json.writing

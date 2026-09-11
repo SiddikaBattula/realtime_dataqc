@@ -34,43 +34,47 @@ load_dotenv(APP_DIR / ".env")
 
 class Config:
 
-    DB_HOST = os.getenv("DB_HOST")
+    # Credentials are shared across wells; the host and database name are not -
+    # each well supplies its own through POST /wells.
     DB_PORT = int(os.getenv("DB_PORT", "3306"))
 
     DB_USERNAME = os.getenv("DB_USERNAME")
     DB_PASSWORD = os.getenv("DB_PASSWORD")
 
-    DB_NAME = os.getenv("DB_NAME")
-    TABLE_NAME = os.getenv("TABLE_NAME")
+    # The single-row table each well exposes its latest reading in.
+    TABLE_NAME = os.getenv("TABLE_NAME", "timebaselastrecord")
 
-    CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "1"))
+    # Seconds between readings.
+    CHECK_INTERVAL = float(os.getenv("CHECK_INTERVAL", "1"))
 
-    DRILLING_CRITERIA = float(
-        os.getenv("DRILLING_CRITERIA", "0.1")
-    )
+    # Seconds to wait before reconnecting after the loop hits an error.
+    RETRY_INTERVAL = float(os.getenv("RETRY_INTERVAL", "5"))
 
+    # Hole depth minus bit depth, in metres: at or below this the bit is on
+    # bottom (DRILLING), above it the string is moving (RIH).
+    DRILLING_CRITERIA = float(os.getenv("DRILLING_CRITERIA", "0.1"))
+
+    # ---- where things live -------------------------------------------
     BASE_DIR = APP_DIR
 
     DATA_DIR = APP_DIR / "data"
     LOG_DIR = APP_DIR / "logs"
+    OUTPUT_DIR = APP_DIR / "output"
 
     COLUMN_MAP_FILE = DATA_DIR / "column_mapping.json"
     RANGES_FILE = DATA_DIR / "ranges.json"
     ACTIVITY_FILE = DATA_DIR / "activity.json"
     CONDITIONS_FILE = DATA_DIR / "conditions.json"
 
-    LOG_RETENTION_HOURS = int(
-        os.getenv("LOG_RETENTION_HOURS", "24")
-    )
+    # ---- logging -------------------------------------------------------
+    LOG_RETENTION_HOURS = int(os.getenv("LOG_RETENTION_HOURS", "24"))
 
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
-    # The rule-file API (config_api.py), which is a separate process from the
-    # agent - they share the data/ folder and nothing else.
+    # ---- alert storage -------------------------------------------------
+    # Alerts are written to output/<database_name>/alerts.json and nowhere
+    # else - nothing is inserted into any database.
+
+    # ---- the rule-file API (config_api.py) -----------------------------
     CONFIG_API_HOST = os.getenv("CONFIG_API_HOST", "0.0.0.0")
     CONFIG_API_PORT = int(os.getenv("CONFIG_API_PORT", "8000"))
-
-    ALERT_TABLE = os.getenv(
-        "ALERT_TABLE",
-        "dataqcalert"
-    )

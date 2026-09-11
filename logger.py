@@ -53,10 +53,20 @@ def purge_old_logs(max_age_hours=None):
     return removed
 
 
-def setup_logging(level=logging.INFO):
+def setup_logging(level=None):
+    """
+    Console + rotating file handlers, once per process.
+
+    `level` sets what reaches the console; LOG_LEVEL in .env is the default.
+    The file handler always takes DEBUG, so the full detail is on disk even
+    when the console is quiet.
+    """
     global _CONFIGURED
     if _CONFIGURED:
         return
+
+    if level is None:
+        level = getattr(logging, Config.LOG_LEVEL.upper(), logging.INFO)
 
     Config.LOG_DIR.mkdir(parents=True, exist_ok=True)
     purge_old_logs()
