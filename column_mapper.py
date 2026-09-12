@@ -54,6 +54,31 @@ class ColumnMapper:
     # Loading
     # ------------------------------------------------------------------
     @classmethod
+    def from_mapping(cls, mapping, critical=None, source="the well's rules"):
+        """
+        A mapper from a mapping already in memory.
+
+        This is the one a well agent uses: its mapping comes out of that well's
+        own record, not off disk, because two rigs on the same server can name
+        their columns quite differently.
+        """
+        if not isinstance(mapping, dict) or not mapping:
+            raise ColumnMappingError(f"{source}: column mapping must be a non-empty object")
+
+        for logical, aliases in mapping.items():
+            if not isinstance(aliases, list) or not aliases:
+                raise ColumnMappingError(
+                    f"{source}: '{logical}' must map to a non-empty list of column names"
+                )
+            if not all(isinstance(a, str) and a.strip() for a in aliases):
+                raise ColumnMappingError(
+                    f"{source}: aliases for '{logical}' must all be non-empty strings"
+                )
+
+        log.info("Column mapping from %s (%d logical columns)", source, len(mapping))
+        return cls(mapping, critical)
+
+    @classmethod
     def from_file(cls, path, critical=None):
         path = Path(path)
         if not path.exists():
@@ -65,21 +90,7 @@ class ColumnMapper:
         except json.JSONDecodeError as exc:
             raise ColumnMappingError(f"{path} is not valid JSON: {exc}") from exc
 
-        if not isinstance(mapping, dict) or not mapping:
-            raise ColumnMappingError(f"{path} must be a non-empty JSON object")
-
-        for logical, aliases in mapping.items():
-            if not isinstance(aliases, list) or not aliases:
-                raise ColumnMappingError(
-                    f"{path}: '{logical}' must map to a non-empty list of column names"
-                )
-            if not all(isinstance(a, str) and a.strip() for a in aliases):
-                raise ColumnMappingError(
-                    f"{path}: aliases for '{logical}' must all be non-empty strings"
-                )
-
-        log.info("Loaded column mapping from %s (%d logical columns)", path, len(mapping))
-        return cls(mapping, critical)
+        return cls.from_mapping(mapping, critical, source=str(path))
 
     # ------------------------------------------------------------------
     # Resolution against the live table

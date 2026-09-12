@@ -431,3 +431,93 @@ def save(name, document):
 # what a change replaced. There is no endpoint that reads it back: to undo a
 # change, rename data/<file>.json.bak over data/<file>.json.
 
+
+# ---------------------------------------------------------------------------
+# A single well's rule set
+#
+# The files in data/ are the template every well starts from; each well then
+# keeps its own copy, entered in the dashboard. Those four blocks are checked
+# against each other rather than against the files on disk - a well may map
+# its columns quite differently from the next one, and its ranges and activity
+# flags have to agree with its own mapping, not with the template's.
+# ---------------------------------------------------------------------------
+
+# The order the data folder lists them in, which is the order the form asks
+# for them in.
+RULE_BLOCKS = ("activity", "column_mapping", "conditions", "ranges")
+
+
+def _check_mapping_shape(document):
+    """column_mapping on its own - structure, with no other file consulted."""
+    _check_object(document, "column_mapping")
+
+    for logical, aliases in document.items():
+        if not isinstance(aliases, list) or not aliases:
+            raise RuleFileError(
+                f"column_mapping: '{logical}' must be a non-empty list of "
+                "column names, e.g. [\"TOT_DPT_MD\", \"DEPTH\"]"
+            )
+
+        if not all(isinstance(a, str) and a.strip() for a in aliases):
+            raise RuleFileError(
+                f"column_mapping: every name for '{logical}' must be text"
+            )
+
+
+def validate_set(rules):
+    """Raise RuleFileError unless `rules` is a usable set for one well."""
+    if not isinstance(rules, dict):
+        raise RuleFileError("The rules must be a JSON object")
+
+    # Absent, null and empty all mean the same thing to whoever filled the
+    # form in, so they get the same sentence back.
+    missing = [block for block in RULE_BLOCKS if not rules.get(block)]
+
+    if missing:
+        raise RuleFileError(
+            f"The rules are missing {', '.join(missing)}. All four blocks are "
+            "required: " + ", ".join(RULE_BLOCKS)
+        )
+
+    # The mapping first: it decides which parameter names the other three are
+    # allowed to mention.
+    try:
+        _check_mapping_shape(rules["column_mapping"])
+
+        known = set(rules["column_mapping"])
+
+        _check_activity(rules["activity"], known)
+        _check_conditions(rules["conditions"], known)
+        _check_ranges(rules["ranges"], known)
+
+    except RuleFileError as exc:
+        # The checks are shared with the file endpoints and name their subject
+        # as "ranges.json". A well's rules were typed into a form and there is
+        # no such file to go and open, so the same sentence is reworded to
+        # name the block instead. Presentation only - nothing is re-checked.
+        raise RuleFileError(str(exc).replace(".json", "")) from exc
+
+
+def tidy_set(rules):
+    """
+    The same rules, written the way they are stored: 90 not 90.0, no alias
+    listed twice.
+
+    This runs before validate_set, so it has to survive rules that are not
+    usable yet - a block left out entirely is passed through untouched for
+    validate_set to complain about properly.
+    """
+    if not isinstance(rules, dict):
+        raise RuleFileError("The rules must be a JSON object")
+
+    tidy = {block: _tidy_numbers(rules.get(block)) for block in RULE_BLOCKS}
+
+    if isinstance(tidy.get("column_mapping"), dict):
+        tidy["column_mapping"] = _dedupe_aliases(tidy["column_mapping"])
+
+    return tidy
+
+
+def template():
+    """The four files in data/, as the starting point for a new well."""
+    return {block: load(block) for block in RULE_BLOCKS}

@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+import well_rules
 from logger import get_logger
 from column_mapper import ColumnMapper, to_number
 
@@ -45,29 +46,20 @@ _TIMESTAMP_PREFIX = re.compile(r"^\[[^\]]*\]\s*")
 _NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?")
 
 
-def _rule_stamps():
+def _stamp(path):
     """
-    When each rule file was last written.
+    When a well's rule file was last written.
 
-    Four stat() calls a second is nothing, and it means the agent needs no
-    connection to the config API - the files are the only thing they share.
+    One stat() a second is nothing, and it means the agent needs no connection
+    to the config API - the file is the only thing they share.
     """
-    files = {
-        "ranges": Config.RANGES_FILE,
-        "activity": Config.ACTIVITY_FILE,
-        "conditions": Config.CONDITIONS_FILE,
-        "column_mapping": Config.COLUMN_MAP_FILE,
-    }
+    if path is None:
+        return None
 
-    stamps = {}
-
-    for name, path in files.items():
-        try:
-            stamps[name] = Path(path).stat().st_mtime_ns
-        except OSError:
-            stamps[name] = None
-
-    return stamps
+    try:
+        return Path(path).stat().st_mtime_ns
+    except OSError:
+        return None
 
 
 def _alert_fingerprint(alert):
@@ -82,17 +74,6 @@ def _alert_fingerprint(alert):
     return _NUMBER.sub("#", _TIMESTAMP_PREFIX.sub("", alert))
 
 
-def load_json(path, label):
-    path = Path(path)
-    if not path.exists():
-        raise FileNotFoundError(f"{label} file not found: {path}")
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            return json.load(fh)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"{label} file {path} is not valid JSON: {exc}") from exc
-
-
 @dataclass
 class ValidationResult:
     alerts: list = field(default_factory=list)
@@ -104,12 +85,17 @@ class ValidationResult:
 
 
 class RealtimeValidator:
-    def __init__(self, mapper, ranges, activity_rules, conditions, drilling_criteria):
+    def __init__(self, mapper, ranges, activity_rules, conditions, drilling_criteria,
+                 rules_path=None):
         self.mapper = mapper
         self.ranges = ranges
         self.activity_rules = activity_rules
         self.conditions = conditions
         self.drilling_criteria = drilling_criteria
+
+        # The well file these rules came from, watched for edits. None means
+        # nothing to watch - the rules were handed in directly.
+        self.rules_path = rules_path
 
         self._apply_conditions()
 
@@ -136,8 +122,8 @@ class RealtimeValidator:
         self._last_logged = None
         self._last_activity = None
 
-        # What the rule files looked like when they were last read in.
-        self._rule_stamps = _rule_stamps()
+        # What the well's rule file looked like when it was last read in.
+        self._rule_stamp = _stamp(self.rules_path)
 
         self._audit_config()
 
@@ -163,56 +149,52 @@ class RealtimeValidator:
 
     def reload_rules_if_changed(self, row):
         """
-        Pick up an edit to data/*.json without a restart.
+        Pick up an edit to this well's rules without a restart.
 
-        The config API writes the files; this notices the change on the next
-        reading and reads them in again. The SPP, TotalSPM and ROP baselines
-        are left alone, so a threshold change does not throw away the history
-        those checks are in the middle of measuring against.
+        The dashboard writes the well's file; this notices on the next reading
+        and reads it in again. The SPP, TotalSPM, ROP and HOOKLOAD baselines
+        are left alone, so changing a threshold does not throw away the
+        history those checks are in the middle of measuring against.
 
-        A file that is unreadable (edited by hand into something invalid) is
-        reported once and the rules already in memory keep running.
+        A file that cannot be read is reported once and the rules already in
+        memory keep running - a well should not stop being checked because
+        someone saved something odd.
         """
-        stamps = _rule_stamps()
-
-        if stamps == self._rule_stamps:
+        if self.rules_path is None:
             return False
 
-        changed = [
-            name for name, stamp in stamps.items()
-            if self._rule_stamps.get(name) != stamp
-        ]
+        stamp = _stamp(self.rules_path)
 
-        # Recorded before the reload is attempted: a file that fails to load is
-        # not retried until it changes again, so one bad edit cannot fill the
-        # log at a line a second.
-        self._rule_stamps = stamps
+        if stamp == self._rule_stamp:
+            return False
+
+        # Recorded before the reload is attempted: a file that fails to load
+        # is not retried until it changes again, so one bad save cannot fill
+        # the log at a line a second.
+        self._rule_stamp = stamp
 
         try:
-            if "column_mapping" in changed:
-                mapper = ColumnMapper.from_file(Config.COLUMN_MAP_FILE)
-                mapper.resolve(list(row.keys()))
-                self.mapper = mapper
+            rules = well_rules.load_rules(self.rules_path)
 
-            if "ranges" in changed:
-                self.ranges = load_json(Config.RANGES_FILE, "ranges")
+            mapper = ColumnMapper.from_mapping(rules["column_mapping"])
+            mapper.resolve(list(row.keys()))
 
-            if "activity" in changed:
-                self.activity_rules = load_json(Config.ACTIVITY_FILE, "activity")
+            self.mapper = mapper
+            self.ranges = rules["ranges"]
+            self.activity_rules = rules["activity"]
+            self.conditions = rules["conditions"]
 
-            if "conditions" in changed:
-                self.conditions = load_json(Config.CONDITIONS_FILE, "conditions")
-                self._apply_conditions()
+            self._apply_conditions()
 
         except Exception as exc:
             log.error(
-                "%s changed but could not be loaded (%s) - carrying on with the "
-                "rules already in memory",
-                ", ".join(changed), exc,
+                "%s changed but could not be loaded (%s) - carrying on with "
+                "the rules already in memory",
+                Path(self.rules_path).name, exc,
             )
             return False
 
-        log.info("Reloaded after a change to %s", ", ".join(f"{n}.json" for n in changed))
+        log.info("Reloaded rules from %s", Path(self.rules_path).name)
 
         self._audit_config()
 
@@ -750,22 +732,27 @@ class RealtimeValidator:
 # Building one
 # ----------------------------------------------------------------------
 
-def build_validator(sample_row):
+def build_validator(sample_row, rules, rules_path=None):
     """
-    A validator for one well, with the column mapping resolved against it.
+    A validator for one well, from that well's own rules.
 
-    `sample_row` is the first row read from that well's table: SELECT * gives
-    every column, which is what the mapping is matched against. Resolving here
-    rather than on the first check means a rig whose columns are named
-    differently is reported at startup.
+    `sample_row` is the first row read from its table: SELECT * gives every
+    column, which is what the mapping is matched against. Resolving here rather
+    than on the first check means a rig whose columns are named differently is
+    reported at startup.
+
+    `rules_path` is the file those rules came from. Given one, the validator
+    re-reads it whenever it changes, so an edit in the dashboard takes effect
+    without restarting the agent.
     """
-    mapper = ColumnMapper.from_file(Config.COLUMN_MAP_FILE)
+    mapper = ColumnMapper.from_mapping(rules["column_mapping"])
     mapper.resolve(list(sample_row.keys()))
 
     return RealtimeValidator(
         mapper=mapper,
-        ranges=load_json(Config.RANGES_FILE, "ranges"),
-        activity_rules=load_json(Config.ACTIVITY_FILE, "activity"),
-        conditions=load_json(Config.CONDITIONS_FILE, "conditions"),
+        ranges=rules["ranges"],
+        activity_rules=rules["activity"],
+        conditions=rules["conditions"],
         drilling_criteria=Config.DRILLING_CRITERIA,
+        rules_path=rules_path,
     )

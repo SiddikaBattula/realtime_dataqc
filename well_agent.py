@@ -4,6 +4,10 @@ One agent per well: read the latest row, check it, record what is wrong.
 The loop is deliberately dull - connect, read, compare against the last row,
 validate if anything moved, sleep. Everything interesting is in the validator.
 
+The rules it checks against are this well's own - entered in the dashboard and
+kept in data/wells/ - so two wells on the same server can have quite different
+ranges, activity flags and column names.
+
 Alerts are appended to output/<database_name>/alerts.json. They are not
 written to any database.
 """
@@ -13,6 +17,7 @@ import time
 
 from pathlib import Path
 
+import well_rules
 from config import Config
 from logger import get_logger
 from mysql_client import MySQLClient
@@ -26,6 +31,12 @@ class WellAgent:
     def __init__(self, well):
         self.database_name = well["database_name"]
         self.ip_address = well["ip_address"]
+
+        # This well's own four rule blocks, and the file they came from. The
+        # validator re-reads that file when it changes, so editing the well in
+        # the dashboard takes effect without restarting its agent.
+        self.rules = well["rules"]
+        self.rules_path = well_rules.path_for(self.database_name)
 
         self.db = None
         self.validator = None
@@ -54,7 +65,9 @@ class WellAgent:
                     continue
 
                 if self.validator is None:
-                    self.validator = build_validator(row)
+                    self.validator = build_validator(
+                        row, self.rules, self.rules_path
+                    )
 
                 snapshot = json.dumps(row, sort_keys=True, default=str)
 

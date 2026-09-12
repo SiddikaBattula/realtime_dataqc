@@ -101,26 +101,66 @@ page notices it is not on the API's port and calls `localhost:8000` instead,
 and the API allows the cross-origin request. Change `API_PORT` at the top of
 `app.js` if you change `CONFIG_API_PORT`.
 
-## The rule files
+## Rules belong to a well
 
-Everything the checks do comes from `data/`, and all four are editable at
-runtime — the agent stats them each reading and reloads within a second of a
-change. Edit them through `/docs` rather than by hand: every write there is
-validated against the other files, backed up to `.json.bak`, and replaced
-atomically, so a bad edit is refused instead of found later by a running agent.
+Every value a well is checked against — its ranges, its activity flags, its
+change thresholds and what its rig calls each column — is entered in the
+dashboard when the well is added, and applies to **that well only**. Two wells
+on the same server can have quite different limits and quite different column
+names, which is the point: they are different rigs.
 
-- **`column_mapping.json`** — logical name → the column names a rig might use
-  for it. Matched case-insensitively, first hit wins. Edit this when a new rig
-  calls its depth column something new; nothing else needs to change.
-- **`ranges.json`** — `min`/`max` per parameter, with an optional `unit` for
-  the alert text and an optional `factor`. **`factor` is a multiplier applied
-  to the stored reading before it is compared**, so the limits can be written
-  in the unit you think in. ROP is the case it exists for.
-- **`activity.json`** — per activity (`DRILLING`, `RIH`), `1` means the
-  parameter must be above zero, `0` means ignore it.
-- **`conditions.json`** — how far a value has to move, over how long. `TA_TG`
-  and `HOOKLOAD` take a `duration_seconds` only; `SPP`, `SPM` and `ROP` need a
-  `percentage_change` too. All five blocks are required.
+A well's record lives in `data/wells/<name>.json`:
+
+```json
+{
+    "database_name": "kj-16",
+    "ip_address": "10.0.0.5",
+    "rules": { "activity": {…}, "column_mapping": {…}, "conditions": {…}, "ranges": {…} }
+}
+```
+
+Wells are saved as they are added, so monitoring **resumes by itself after a
+restart** rather than every well having to be entered again.
+
+### data/*.json is the template
+
+The four files are still there and still mean what they meant, but they are
+now what a new well's form *opens with* rather than the rules anything runs
+on. Editing them changes what the next well starts from; it does not touch a
+well already being monitored. `GET /rules/template` is what the form reads,
+and the `/rules/*` endpoints still edit those files.
+
+That is what makes a 117-field form workable: it arrives filled in, and most
+wells need a handful of changes.
+
+### The four blocks
+
+Asked for in the order the data folder lists them.
+
+- **`activity`** — per activity (`DRILLING`, `RIH`), ticked means the value
+  must not be 0 during it.
+- **`column_mapping`** — what this rig calls each parameter, as a
+  comma-separated list. Matched case-insensitively, first match wins. This is
+  the block that most often differs between rigs.
+- **`conditions`** — how far a value must move, over how long. `TA_TG` and
+  `HOOKLOAD` take a duration only; `SPP`, `SPM` and `ROP` need a percentage
+  too. All five are required.
+- **`ranges`** — `min`/`max` per parameter, with an optional `unit` for the
+  alert text and an optional `factor`. **`factor` multiplies the stored
+  reading before it is compared**, so limits can be written in the unit you
+  think in.
+
+### Checked before anything is saved
+
+The four blocks are checked against each other, not against the files: a range
+or an activity flag naming a parameter this well's mapping does not have is
+refused, with a sentence naming the block and the parameter. Nothing is
+written until it all agrees, so a half-valid rule set never reaches a running
+agent.
+
+Editing a well later — the pencil on its card — writes the same file. The
+agent notices within a second and carries on with the new thresholds, keeping
+the baselines its change checks are part-way through measuring.
 
 ## The checks
 

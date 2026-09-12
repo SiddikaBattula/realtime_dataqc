@@ -4,11 +4,16 @@
   Served by config_api.py, normally from the same origin as the endpoints it
   calls - see API_BASE below for the case where it is not.
 
-  It talks to four things:
-      GET    /wells                  which wells are monitored
-      POST   /wells                  start monitoring one
-      DELETE /wells/{database_name}  stop monitoring one
-      GET    /alerts/{name}          what that well's agent has raised
+  It talks to these:
+      GET    /rules/template            what a new well's form is filled with
+      GET    /wells                     which wells are monitored
+      POST   /wells                     start one, with its own rules
+      GET    /wells/{name}              one well, rules included
+      PUT    /wells/{name}/rules        change that well's rules
+      DELETE /wells/{name}              stop monitoring one
+      GET    /alerts/{name}             what that well's agent has raised
+
+  Rules belong to one well: what is entered for a well affects that well only.
 
   Cards are built once per well and updated in place afterwards. Re-rendering
   the grid every poll would restart every animation and throw away the user's
@@ -70,7 +75,6 @@ const el = {
     grid: document.getElementById('grid'),
     empty: document.getElementById('empty'),
     statWells: document.getElementById('stat-wells'),
-    statAlerts: document.getElementById('stat-alerts'),
     statUpdated: document.getElementById('stat-updated'),
     linkState: document.getElementById('link-state'),
     linkText: document.getElementById('link-text'),
@@ -79,6 +83,9 @@ const el = {
     dbName: document.getElementById('database_name'),
     ipAddress: document.getElementById('ip_address'),
     submit: document.getElementById('add-submit'),
+    modalTitle: document.getElementById('modal-title'),
+    modalError: document.getElementById('modal-error'),
+    resetDefaults: document.getElementById('reset-defaults'),
     toasts: document.getElementById('toasts'),
     tplWell: document.getElementById('tpl-well'),
     tplAlert: document.getElementById('tpl-alert'),
@@ -371,6 +378,10 @@ function buildCard(well) {
     // The address is still worth having, just not worth a line of every card.
     name.title = well.database_name + '  ' + well.ip_address;
 
+    card.querySelector('.well-edit').addEventListener(
+        'click', () => openModal(well.database_name),
+    );
+
     const remove = card.querySelector('.well-remove');
 
     // First click arms, second confirms. Avoids a browser dialog for something
@@ -502,8 +513,6 @@ async function refresh() {
         ),
     );
 
-    let total = 0;
-
     names.forEach((name, index) => {
         const state = cards.get(name);
 
@@ -512,11 +521,9 @@ async function refresh() {
         }
 
         updateCard(state.card, state, results[index]);
-        total += results[index].length;
     });
 
     el.statWells.textContent = names.length;
-    el.statAlerts.textContent = total;
     el.statUpdated.textContent = 'updated ' + new Date().toLocaleTimeString();
 }
 
@@ -540,9 +547,375 @@ function startPolling() {
     });
 }
 
+
 // ---------------------------------------------------------------------------
-// Adding and removing wells
+// The rule form
+//
+// Every value the agent checks a well against is entered here, and belongs to
+// that well alone. The four blocks are asked for in the order the data folder
+// lists them: activity, column mapping, conditions, ranges.
+//
+// `draft` is the single source of truth while the dialog is open - the inputs
+// write into it as they are typed, and it is what gets posted. Reading the
+// values back out of the DOM at submit time instead would make the shape of
+// the rules depend on the shape of the markup.
 // ---------------------------------------------------------------------------
+
+let template = null;     // what data/ says a new well should start from
+let draft = null;        // the rules being edited right now
+let editing = null;      // the well being edited, or null when adding
+
+const copy = (value) => JSON.parse(JSON.stringify(value));
+
+async function getTemplate() {
+    if (template === null) {
+        template = (await api('/rules/template')).rules;
+    }
+
+    return copy(template);
+}
+
+/* A labelled input that writes straight into the draft. */
+function field(label, value, onInput, opts = {}) {
+    const wrap = document.createElement('label');
+    wrap.className = 'field' + (opts.compact ? ' field-compact' : '');
+
+    const name = document.createElement('span');
+    name.textContent = label;
+
+    const input = document.createElement('input');
+    input.type = opts.type || 'text';
+    input.value = value === undefined || value === null ? '' : value;
+
+    if (opts.placeholder) {
+        input.placeholder = opts.placeholder;
+    }
+
+    if (opts.type === 'number') {
+        input.step = 'any';
+    }
+
+    input.addEventListener('input', () => onInput(input.value));
+
+    wrap.append(name, input);
+    return wrap;
+}
+
+function section(title) {
+    const block = document.createElement('div');
+    block.className = 'sub';
+
+    const head = document.createElement('h4');
+    head.className = 'sub-head';
+    head.textContent = title;
+
+    const body = document.createElement('div');
+    body.className = 'sub-body';
+
+    block.append(head, body);
+    return { block, body };
+}
+
+/* A number, or undefined when the box was left empty. */
+function numberOrBlank(text) {
+    const trimmed = String(text).trim();
+
+    if (trimmed === '') {
+        return undefined;
+    }
+
+    const value = Number(trimmed);
+
+    return Number.isNaN(value) ? trimmed : value;
+}
+
+// ---- activity: one tickbox per parameter, per activity --------------------
+
+function renderActivity() {
+    const host = document.getElementById('fields-activity');
+    host.replaceChildren();
+
+    for (const [activity, rules] of Object.entries(draft.activity)) {
+        const { block, body } = section(activity);
+        body.className = 'sub-body sub-body-flags';
+
+        for (const param of Object.keys(rules)) {
+            const wrap = document.createElement('label');
+            wrap.className = 'flag';
+
+            const box = document.createElement('input');
+            box.type = 'checkbox';
+            box.checked = rules[param] === 1;
+
+            // 1 and 0 in the file, not true/false - the agent tests for 1.
+            box.addEventListener('change', () => {
+                draft.activity[activity][param] = box.checked ? 1 : 0;
+            });
+
+            const name = document.createElement('span');
+            name.textContent = param;
+
+            wrap.append(box, name);
+            body.append(wrap);
+        }
+
+        host.append(block);
+    }
+}
+
+/*
+  The three list-shaped blocks are laid out as tables.
+
+  Each row used to carry its own labels ("SECONDS", "% CHANGE") above inputs
+  that stretched to fill the row, so a block with one value had a box the
+  width of the dialog and the labels repeated down the page. Naming the
+  columns once at the top and keeping the inputs at the width of the numbers
+  they hold makes the values line up and the section a third of the height.
+*/
+
+function table(columns) {
+    const grid = document.createElement('div');
+    grid.className = 'table';
+    grid.style.setProperty('--cols', columns.map((c) => c.width).join(' '));
+
+    const head = document.createElement('div');
+    head.className = 'thead';
+
+    for (const column of columns) {
+        const cell = document.createElement('span');
+        cell.textContent = column.label;
+        head.append(cell);
+    }
+
+    grid.append(head);
+    return grid;
+}
+
+function row(grid, name) {
+    const line = document.createElement('div');
+    line.className = 'trow';
+
+    const label = document.createElement('span');
+    label.className = 'tname';
+    label.textContent = name;
+    label.title = name;
+
+    line.append(label);
+    grid.append(line);
+    return line;
+}
+
+/* A bare input for a table cell - the column header is its label. */
+function cell(value, onInput, opts = {}) {
+    const input = document.createElement('input');
+
+    input.type = opts.type || 'text';
+    input.value = value === undefined || value === null ? '' : value;
+    input.title = opts.title || '';
+
+    if (opts.type === 'number') {
+        input.step = 'any';
+    }
+
+    if (opts.placeholder) {
+        input.placeholder = opts.placeholder;
+    }
+
+    input.addEventListener('input', () => onInput(input.value));
+    return input;
+}
+
+function blank(line) {
+    line.append(document.createElement('span'));
+}
+
+// ---- column mapping ------------------------------------------------------
+
+function renderMapping() {
+    const host = document.getElementById('fields-column_mapping');
+    host.replaceChildren();
+
+    const grid = table([
+        { label: 'Parameter', width: '132px' },
+        { label: 'Columns on this rig', width: 'minmax(200px, 1fr)' },
+    ]);
+
+    for (const logical of Object.keys(draft.column_mapping)) {
+        const line = row(grid, logical);
+
+        line.append(cell(
+            draft.column_mapping[logical].join(', '),
+            (text) => {
+                draft.column_mapping[logical] = text
+                    .split(',')
+                    .map((name) => name.trim())
+                    .filter(Boolean);
+            },
+            { placeholder: 'column name, another name', title: 'Comma separated' },
+        ));
+    }
+
+    host.append(wrapScroll(grid));
+}
+
+// ---- conditions ----------------------------------------------------------
+
+// These two carry a duration and no percentage; the API refuses one anyway.
+const DURATION_ONLY = new Set(['TA_TG', 'HOOKLOAD']);
+
+function renderConditions() {
+    const host = document.getElementById('fields-conditions');
+    host.replaceChildren();
+
+    const grid = table([
+        { label: 'Check', width: '132px' },
+        { label: 'Seconds', width: '112px' },
+        { label: '% change', width: '112px' },
+    ]);
+
+    for (const name of Object.keys(draft.conditions)) {
+        const entry = draft.conditions[name];
+        const line = row(grid, name);
+
+        line.append(cell(entry.duration_seconds, (v) => {
+            entry.duration_seconds = numberOrBlank(v);
+        }, { type: 'number', title: 'How long before it counts' }));
+
+        if (DURATION_ONLY.has(name)) {
+            blank(line);
+        } else {
+            line.append(cell(entry.percentage_change, (v) => {
+                entry.percentage_change = numberOrBlank(v);
+            }, { type: 'number', title: 'How far it has to move' }));
+        }
+    }
+
+    host.append(wrapScroll(grid));
+}
+
+// ---- ranges --------------------------------------------------------------
+
+function renderRanges() {
+    const host = document.getElementById('fields-ranges');
+    host.replaceChildren();
+
+    const grid = table([
+        { label: 'Parameter', width: '132px' },
+        { label: 'Min', width: '96px' },
+        { label: 'Max', width: '96px' },
+        { label: 'Unit', width: '86px' },
+        { label: 'Factor', width: '86px' },
+    ]);
+
+    for (const param of Object.keys(draft.ranges)) {
+        const limits = draft.ranges[param];
+        const line = row(grid, param);
+
+        line.append(cell(limits.min, (v) => {
+            limits.min = numberOrBlank(v);
+        }, { type: 'number' }));
+
+        line.append(cell(limits.max, (v) => {
+            limits.max = numberOrBlank(v);
+        }, { type: 'number' }));
+
+        line.append(cell(limits.unit, (v) => {
+            const text = v.trim();
+
+            if (text) {
+                limits.unit = text;
+            } else {
+                delete limits.unit;
+            }
+        }, { title: 'Shown in the alert text' }));
+
+        // Multiplies the stored reading before it is compared, so the limits
+        // can be written in the unit you think in. Blank compares as stored.
+        line.append(cell(limits.factor, (v) => {
+            const value = numberOrBlank(v);
+
+            if (value === undefined) {
+                delete limits.factor;
+            } else {
+                limits.factor = value;
+            }
+        }, { type: 'number', title: 'Multiplies the reading before comparing' }));
+    }
+
+    host.append(wrapScroll(grid));
+}
+
+/* Tables keep their columns on a narrow screen and scroll sideways instead of
+   collapsing into a stack where the headers no longer line up. */
+function wrapScroll(grid) {
+    const scroller = document.createElement('div');
+    scroller.className = 'table-scroll';
+    scroller.append(grid);
+    return scroller;
+}
+
+function renderRules() {
+    renderActivity();
+    renderMapping();
+    renderConditions();
+    renderRanges();
+}
+
+
+// ---------------------------------------------------------------------------
+// Adding, editing and removing wells
+// ---------------------------------------------------------------------------
+
+function showError(message) {
+    el.modalError.textContent = message || '';
+    el.modalError.hidden = !message;
+}
+
+/*
+  Open the dialog.
+
+  With no name it is a new well and the form opens on the template from data/,
+  so only the handful of values that differ for this rig have to be touched.
+  With a name it is that well's own saved rules, and saving replaces them.
+*/
+async function openModal(name) {
+    editing = name || null;
+    showError('');
+
+    el.modalTitle.textContent = editing ? 'Edit ' + editing : 'Add a well';
+    el.submit.textContent = editing ? 'Save rules' : 'Start monitoring';
+    el.dbName.disabled = Boolean(editing);
+
+    el.modal.hidden = false;
+
+    try {
+        if (editing) {
+            const record = await api('/wells/' + encodeURIComponent(editing));
+
+            el.dbName.value = record.database_name;
+            el.ipAddress.value = record.ip_address;
+            draft = record.rules;
+        } else {
+            el.dbName.value = '';
+            el.ipAddress.value = '';
+            draft = await getTemplate();
+        }
+
+        renderRules();
+
+        if (!editing) {
+            el.dbName.focus();
+        }
+    } catch (err) {
+        showError('Could not load the rules: ' + err.message);
+    }
+}
+
+function closeModal() {
+    el.modal.hidden = true;
+    draft = null;
+    editing = null;
+}
 
 async function stopWell(name) {
     try {
@@ -557,54 +930,69 @@ async function stopWell(name) {
 
 el.form.addEventListener('submit', async (event) => {
     event.preventDefault();
+    showError('');
 
     const database_name = el.dbName.value.trim();
     const ip_address = el.ipAddress.value.trim();
 
     if (!database_name || !ip_address) {
+        showError('A database name and an IP address are both needed.');
         return;
     }
 
     el.submit.disabled = true;
-    el.submit.textContent = 'Starting…';
+    el.submit.textContent = 'Saving…';
 
     try {
-        await api('/wells', {
-            method: 'POST',
-            body: JSON.stringify({ database_name, ip_address }),
-        });
+        if (editing) {
+            await api('/wells/' + encodeURIComponent(editing) + '/rules', {
+                method: 'PUT',
+                body: JSON.stringify(draft),
+            });
 
-        toast(database_name + ' added — the agent starts within a few seconds');
+            toast(editing + ' updated — its agent reloads within a second');
+        } else {
+            await api('/wells', {
+                method: 'POST',
+                body: JSON.stringify({ database_name, ip_address, rules: draft }),
+            });
 
-        el.form.reset();
+            toast(database_name + ' added — the agent starts within a few seconds');
+        }
+
         closeModal();
         startPolling();
     } catch (err) {
-        toast(err.message, 'error');
+        // The API says which block and which parameter is wrong, so it is
+        // shown against the form rather than in a toast that disappears.
+        showError(err.message);
     } finally {
         el.submit.disabled = false;
-        el.submit.textContent = 'Start monitoring';
+        el.submit.textContent = editing ? 'Save rules' : 'Start monitoring';
+    }
+});
+
+// Back to what data/ says, for when a well has been edited into a corner.
+el.resetDefaults.addEventListener('click', async () => {
+    try {
+        draft = await getTemplate();
+        renderRules();
+        showError('');
+        toast('Rules reset to the defaults in data/ — not saved yet');
+    } catch (err) {
+        showError(err.message);
     }
 });
 
 // ---------------------------------------------------------------------------
-// Settings
+// Opening and closing
 // ---------------------------------------------------------------------------
 
-function openModal() {
-    el.modal.hidden = false;
-    el.dbName.focus();
-}
-
-function closeModal() {
-    el.modal.hidden = true;
-}
-
-document.getElementById('settings-open').addEventListener('click', openModal);
+document.getElementById('settings-open').addEventListener('click', () => openModal());
 document.getElementById('settings-close').addEventListener('click', closeModal);
 
 for (const button of document.querySelectorAll('[data-open-settings]')) {
-    button.addEventListener('click', openModal);
+    button.addEventListener('click', () => openModal());
 }
 
 el.modal.addEventListener('click', (event) => {

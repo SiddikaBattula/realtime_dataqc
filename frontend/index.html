@@ -25,7 +25,8 @@
             <button class="btn" id="settings-open" type="button">
                 <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
                     <circle cx="12" cy="12" r="3" />
-                    <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 8.9 19a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 5 8.9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9.5a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9.5a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+                    <path
+                        d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 8.9 19a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 5 8.9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9.5a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9.5a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
                 </svg>
                 Settings
             </button>
@@ -36,17 +37,15 @@
         <div class="summary">
             <span><b id="stat-wells">0</b> wells monitored</span>
             <i class="summary-sep"></i>
-            <span><b id="stat-alerts">0</b> active alerts</span>
-            <i class="summary-sep"></i>
             <span class="summary-faint" id="stat-updated">—</span>
         </div>
 
         <section class="grid" id="grid"></section>
 
         <div class="empty" id="empty">
-            <svg class="empty-mark" viewBox="0 0 24 24" aria-hidden="true">
+            <!-- <svg class="empty-mark" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M12 2 4 7v10l8 5 8-5V7z" />
-            </svg>
+            </svg> -->
             <h2>No wells being monitored</h2>
             <p>Open <b>Settings</b> and add a well by its database name and IP address.</p>
             <button class="btn btn-primary" type="button" data-open-settings>Add the first well</button>
@@ -60,6 +59,11 @@
                 <span class="well-dot"></span>
                 <h2 class="well-name"></h2>
                 <span class="well-count"></span>
+                <button class="well-edit" type="button" title="Edit this well's rules">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+                    </svg>
+                </button>
                 <button class="well-remove" type="button" title="Stop monitoring this well">
                     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M18 6 6 18M6 6l12 12" />
@@ -89,7 +93,8 @@
         </li>
     </template>
 
-    <!-- Settings -->
+    <!-- Add / edit a well. Every value the agent checks against is entered
+         here, in the order the data folder lists them. -->
     <div class="modal" id="modal" hidden>
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <header class="modal-head">
@@ -102,21 +107,68 @@
             </header>
 
             <form class="modal-form" id="add-well-form" autocomplete="off">
-                <label class="field">
-                    <span>Database name</span>
-                    <input type="text" id="database_name" placeholder="kj-16" required spellcheck="false">
-                </label>
+                <div class="modal-body">
 
-                <label class="field">
-                    <span>IP address</span>
-                    <input type="text" id="ip_address" placeholder="10.0.0.5" required spellcheck="false">
-                </label>
+                    <details class="group" open>
+                        <summary class="group-head">
+                            <span>Connection</span>
+                            <span class="group-note">Which database, and where</span>
+                        </summary>
+                        <div class="group-body">
+                            <div class="field-row">
+                                <label class="field">
+                                    <span>Database name</span>
+                                    <input type="text" id="database_name" placeholder="kj-16" required
+                                        spellcheck="false">
+                                </label>
+                                <label class="field">
+                                    <span>IP address</span>
+                                    <input type="text" id="ip_address" placeholder="10.0.0.5" required
+                                        spellcheck="false">
+                                </label>
+                            </div>
+                        </div>
+                    </details>
 
-                <p class="field-note">
-                    The agent connects within about five seconds and alerts appear on its card.
-                </p>
+                    <details class="group">
+                        <summary class="group-head">
+                            <span>Activity</span>
+                            <span class="group-note">Ticked means the value must not be 0 during it</span>
+                        </summary>
+                        <div class="group-body" id="fields-activity"></div>
+                    </details>
 
-                <button class="btn btn-primary btn-block" type="submit" id="add-submit">Start monitoring</button>
+                    <details class="group">
+                        <summary class="group-head">
+                            <span>Column mapping</span>
+                            <span class="group-note">What this rig calls each parameter, first match wins</span>
+                        </summary>
+                        <div class="group-body" id="fields-column_mapping"></div>
+                    </details>
+
+                    <details class="group">
+                        <summary class="group-head">
+                            <span>Conditions</span>
+                            <span class="group-note">How far a value must move, over how long</span>
+                        </summary>
+                        <div class="group-body" id="fields-conditions"></div>
+                    </details>
+
+                    <details class="group">
+                        <summary class="group-head">
+                            <span>Ranges</span>
+                            <span class="group-note">Outside min/max raises an alert</span>
+                        </summary>
+                        <div class="group-body" id="fields-ranges"></div>
+                    </details>
+
+                </div>
+
+                <footer class="modal-foot">
+                    <p class="modal-error" id="modal-error" hidden></p>
+                    <button class="btn" id="reset-defaults" type="button">Reset to defaults</button>
+                    <button class="btn btn-primary" id="add-submit" type="submit">Start monitoring</button>
+                </footer>
             </form>
         </div>
     </div>

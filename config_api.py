@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 
 import rule_files
 import well_registry
+import well_rules
 from config import Config
 from logger import setup_logging, get_logger
 from rule_files import RuleFileError
@@ -47,8 +48,18 @@ FRONTEND_DIR = Config.BASE_DIR / "frontend"
 
 
 class WellRequest(BaseModel):
-    database_name: str
-    ip_address: str
+    """A well, and the rules it is to be checked against."""
+
+    database_name: str = Field(..., examples=["kj-16"])
+    ip_address: str = Field(..., examples=["10.0.0.5"])
+
+    rules: Optional[dict] = Field(
+        None,
+        description="The well's own activity, column_mapping, conditions and "
+                    "ranges blocks. Leave it out and the well starts from the "
+                    "template in data/ - GET /rules/template is what the "
+                    "dashboard's form is filled from.",
+    )
 
 class RuleFile(str, Enum):
     """The four files, as a dropdown in the docs page."""
@@ -129,13 +140,18 @@ class ChangeCondition(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log.info("Editing the rule files in %s", Config.DATA_DIR)
+    log.info("Rule template in %s, wells in %s", Config.DATA_DIR, well_rules.WELLS_DIR)
 
+    # The template a new well's form opens with. A well that is already saved
+    # does not depend on these, so a broken one is a warning, not a stop.
     for name in rule_files.FILES:
         try:
             rule_files.load(name)
         except RuleFileError as exc:
             log.error("%s cannot be read: %s", name, exc)
+
+    # Wells saved by a previous run come back by themselves.
+    well_registry.load_saved()
 
     log.info(
         "Config API ready on http://%s:%s/docs",
@@ -209,38 +225,107 @@ def _guard(action):
 # add wells and delete
 # ---------------------------------------------------------------------------
 
+@app.get("/rules/template", summary="The rules a new well starts from")
+def rules_template():
+    """
+    The four blocks in data/, as the dashboard's form is filled with.
+
+    They are a starting point, not the rules anything runs on: every well
+    keeps its own copy from the moment it is added, and editing these files
+    afterwards changes nothing for a well already being monitored.
+    """
+    return _guard(lambda: {"blocks": rule_files.RULE_BLOCKS, "rules": well_rules.template()})
+
+
 @app.post("/wells", summary="Start monitoring a well")
 def add_well(well: WellRequest):
     """
-    The agent manager picks it up within about five seconds.
+    Save a well with its own rules and start monitoring it.
 
-    Sending the same database_name again replaces the address on record; the
-    agent already running keeps the one it connected with until it is removed
-    and added back.
+    The rules are checked against each other before anything is written - a
+    range or an activity flag naming a parameter the well's column mapping
+    does not have is refused here, with a sentence saying which.
+
+    Sending the same database_name again replaces that well's record; its
+    agent picks the new rules up within a second, without restarting.
     """
-    well_registry.add(well.database_name, well.ip_address)
+    rules = well.rules if well.rules is not None else _guard(well_rules.template)
+
+    record = _guard(
+        lambda: well_registry.add(well.database_name, well.ip_address, rules)
+    )
 
     log.info("Well added: %s (%s)", well.database_name, well.ip_address)
 
     return {
         "message": f"{well.database_name} added",
         "status": "success",
+        "database_name": record["database_name"],
+        "ip_address": record["ip_address"],
     }
 
 
 @app.get("/wells", summary="Which wells are being monitored")
 def get_wells():
-    wells = well_registry.all_wells()
+    """Names and addresses only - the rules are large, and are fetched per
+    well from /wells/{database_name}."""
+    wells = well_registry.summaries()
+
+    return {"count": len(wells), "wells": wells}
+
+
+@app.get("/wells/{database_name}", summary="One well, with its rules")
+def get_well(database_name: str):
+    record = well_registry.get(database_name)
+
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No well called '{database_name}' is being monitored",
+        )
+
+    return record
+
+
+@app.put("/wells/{database_name}/rules", summary="Change one well's rules")
+def set_well_rules(
+    database_name: str,
+    rules: dict = Body(
+        ...,
+        description="All four blocks. They are checked against each other "
+                    "before anything is written.",
+    ),
+):
+    """
+    Replace a well's rules, leaving its address alone.
+
+    The agent notices within a second and carries on with the new thresholds,
+    keeping the baselines its change checks are measuring against.
+    """
+    record = well_registry.get(database_name)
+
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No well called '{database_name}' is being monitored",
+        )
+
+    saved = _guard(
+        lambda: well_registry.add(database_name, record["ip_address"], rules)
+    )
 
     return {
-        "count": len(wells),
-        "wells": wells,
+        "status": "saved",
+        "database_name": database_name,
+        "note": "The agent reloads within about a second.",
+        "rules": saved["rules"],
     }
 
 
 @app.delete("/wells/{database_name}", summary="Stop monitoring a well")
 def delete_well(database_name: str):
-    if not well_registry.remove(database_name):
+    """Stops the agent and removes the well's saved rules."""
+    if not _guard(lambda: well_registry.remove(database_name)):
         raise HTTPException(
             status_code=404,
             detail=f"No well called '{database_name}' is being monitored",
@@ -249,8 +334,6 @@ def delete_well(database_name: str):
     log.info("Well removed: %s", database_name)
 
     return {"message": f"{database_name} removed"}
-
-
 
 
 # ---------------------------------------------------------------------------
