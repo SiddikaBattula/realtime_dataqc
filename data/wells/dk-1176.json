@@ -201,7 +201,7 @@
             },
             "ROP": {
                 "min": 0,
-                "max": 50,
+                "max": 100,
                 "unit": "m/hr",
                 "factor": 60
             },

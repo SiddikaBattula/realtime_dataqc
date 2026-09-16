@@ -65,6 +65,8 @@ class Config:
     RANGES_FILE = DATA_DIR / "ranges.json"
     ACTIVITY_FILE = DATA_DIR / "activity.json"
     CONDITIONS_FILE = DATA_DIR / "conditions.json"
+    DISPLAY_NAME_FILE = DATA_DIR / "display_name.json"
+
 
     # ---- logging -------------------------------------------------------
     LOG_RETENTION_HOURS = int(os.getenv("LOG_RETENTION_HOURS", "24"))

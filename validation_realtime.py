@@ -129,6 +129,14 @@ class RealtimeValidator:
 
         self._audit_config()
 
+        try:
+            with open(Config.DISPLAY_NAME_FILE, "r", encoding="utf-8") as f:
+                self.display_names = json.load(f)
+        except Exception:
+            self.display_names = {}
+
+        self._rule_stamp = _stamp(self.rules_path)
+
     # ------------------------------------------------------------------
     # Rule files
     # ------------------------------------------------------------------
@@ -305,6 +313,8 @@ class RealtimeValidator:
 
         return activity
 
+    def display_name(self, param):
+        return self.display_names.get(param, param)
     # ------------------------------------------------------------------
     # Main entry point - mirrors the original validate_realtime_data()
     # ------------------------------------------------------------------
@@ -361,7 +371,7 @@ class RealtimeValidator:
                         value = self._get_total_spm(normalized_data)
                         if value <= 0:
                             raise_alert(
-                                f"[{date_str}] SPM cannot be 0 in {activity} where BD:{bit_depth}{depth_unit}, MD:{total_depth}{depth_unit}",
+                                f"[{date_str}] {self.display_name(param)} cannot be 0 in {activity} where BD:{bit_depth}{depth_unit}, MD:{total_depth}{depth_unit}",
                                 "SPM",
                             )
 
@@ -374,7 +384,7 @@ class RealtimeValidator:
 
                     if value is None or value <= 0:
                         raise_alert(
-                            f"[{date_str}] {param} cannot be 0 in {activity} where BD:{bit_depth}{depth_unit}, MD:{total_depth}{depth_unit}",
+                            f"[{date_str}] {self.display_name(param)} cannot be 0 in {activity} where BD:{bit_depth}{depth_unit}, MD:{total_depth}{depth_unit}",
                             param,
                         )
                                             
@@ -438,14 +448,14 @@ class RealtimeValidator:
             
             if value < min_val:
                 raise_alert(
-                    f"[{date_str}] {param} : {value:.2f}{unit} below limit {min_text}{unit} BD : {bit_depth}{depth_unit} ",
+                    f"[{date_str}] {self.display_name(param)} : {value:.2f}{unit} below limit {min_text}{unit} BD : {bit_depth}{depth_unit} ",
                     param,
                     alert_key=f"{param}:{value:.2f}"
                 )
 
             elif value > max_val:
                 raise_alert(
-                    f"[{date_str}] {param} : {value:.2f}{unit} above limit {max_text}{unit}  BD : {bit_depth}{depth_unit}",
+                    f"[{date_str}] {self.display_name(param)} : {value:.2f}{unit} above limit {max_text}{unit}  BD : {bit_depth}{depth_unit}",
                     param,
                     alert_key=f"{param}:{value:.2f}"
                 )
