@@ -30,13 +30,22 @@
         "Total_RPM"
     ],
     "SPM": [
-        "SPM",
-        "TotalSPM",
-        "TOT_SPM",
+        "SPM"
+    ],
+    "MP1_SPM": [
         "MP1_SPM"
     ],
     "MP2_SPM": [
         "MP2_SPM"
+    ],
+    "MP3_SPM": [
+        "MP3_SPM"
+    ],
+    "MP4_SPM": [
+        "MP4_SPM"
+    ],
+    "MP5_SPM": [
+        "MP5_SPM"
     ],
     "HOOKLOAD": [
         "HOOKLOAD",

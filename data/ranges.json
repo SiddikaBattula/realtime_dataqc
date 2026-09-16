@@ -1,7 +1,13 @@
 {
+    "DEPTH": {
+        "min": 0,
+        "max": 10000,
+        "unit": "m",
+        "factor": 1
+    },
     "ROP": {
         "min": 0,
-        "max": 200,
+        "max": 100,
         "unit": "m/hr",
         "factor": 60
     },
@@ -32,7 +38,7 @@
     },
     "TG": {
         "min": 0,
-        "max": 100,
+        "max": 10,
         "unit": "%"
     },
     "TA": {
@@ -42,22 +48,22 @@
     },
     "MW_IN": {
         "min": 0,
-        "max": 25,
+        "max": 15,
         "unit": "ppg"
     },
     "MW_OUT": {
         "min": 0,
-        "max": 25,
+        "max": 15,
         "unit": "ppg"
     },
     "TEMP_IN": {
         "min": 0,
-        "max": 200,
+        "max": 100,
         "unit": "°C"
     },
     "TEMP_OUT": {
         "min": 0,
-        "max": 200,
+        "max": 100,
         "unit": "°C"
     },
     "H2S": {
@@ -67,7 +73,7 @@
     },
     "LEL": {
         "min": 0,
-        "max": 100,
+        "max": 1,
         "unit": "%"
     },
     "Co2": {

@@ -267,9 +267,10 @@ def add_well(well: WellRequest):
 
 @app.get("/wells", summary="Which wells are being monitored")
 def get_wells():
-    """Names and addresses only - the rules are large, and are fetched per
-    well from /wells/{database_name}."""
     wells = well_registry.summaries()
+
+    for name, well in wells.items():
+        well["activity"] = "DRILLING"   # temporary test
 
     return {"count": len(wells), "wells": wells}
 

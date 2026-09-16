@@ -32,6 +32,9 @@ class WellAgent:
         self.database_name = well["database_name"]
         self.ip_address = well["ip_address"]
 
+        self.validator = None
+        self.current_activity = "CONNECTING"
+        self.last_snapshot = None
         # This well's own four rule blocks, and the file they came from. The
         # validator re-reads that file when it changes, so editing the well in
         # the dashboard takes effect without restarting its agent.
@@ -77,6 +80,8 @@ class WellAgent:
                     self.last_snapshot = snapshot
 
                     result = self.validator.validate(row)
+
+                    self.current_activity = result.activity
 
                     self.save_alerts(result.alerts)
 

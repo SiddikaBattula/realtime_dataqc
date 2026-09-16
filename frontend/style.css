@@ -393,13 +393,6 @@ body::before {
     }
 }
 
-.well-head {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 12px 11px 12px 15px;
-    border-bottom: 1px solid var(--border-soft);
-}
 
 .well-dot {
     width: 7px;
@@ -433,9 +426,16 @@ body::before {
     }
 }
 
+.well-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 11px 12px 15px;
+    border-bottom: 1px solid var(--border-soft);
+}
+
 .well-name {
-    flex: 1;
-    min-width: 0;
+    flex: none;
     margin: 0;
     font-family: var(--mono);
     font-size: 13.5px;
@@ -443,11 +443,24 @@ body::before {
     letter-spacing: .01em;
     text-transform: uppercase;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    cursor: default;
 }
 
+.well-activity {
+    flex: none;
+    color: var(--amber);
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 650;
+}
+
+/* Push buttons to the right */
+.well-edit {
+    margin-left: auto;
+}
+
+
+
+/* 
 .well-count {
     flex: none;
     padding: 3px 8px;
@@ -459,7 +472,7 @@ body::before {
     letter-spacing: .02em;
     color: var(--text-2);
     white-space: nowrap;
-}
+} */
 
 .well[data-tone="warn"] .well-count {
     color: var(--amber);
@@ -605,11 +618,7 @@ body::before {
 }
 
 .alert-repeat {
-    flex: none;
-    font-family: var(--mono);
-    font-size: 11.5px;
-    font-weight: 650;
-    color: var(--text-3);
+    display: none;
 }
 
 /* Card body when there is nothing wrong. */
@@ -708,6 +717,8 @@ body::before {
     bottom: 0;
     height: 2px;
 }
+
+
 
 .well:hover .well-grip:hover::after,
 .well[data-resizing] .well-grip::after {
@@ -994,7 +1005,7 @@ body[data-resizing] {
     transition: transform .15s;
 }
 
-.group[open] > .group-head::before {
+.group[open]>.group-head::before {
     transform: rotate(45deg);
 }
 

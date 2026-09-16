@@ -368,36 +368,60 @@ function initResize(card, name) {
 // Drawing
 // ---------------------------------------------------------------------------
 
+// function buildCard(well) {
+//     const card = el.tplWell.content.firstElementChild.cloneNode(true);
+
+//     const name = card.querySelector('.well-name');
+//     const activity = card.querySelector('.well-activity');
+
+//     name.textContent = well.database_name;
+
+//     activity.textContent =
+//         well.activity
+//             ? `(${well.activity})`
+//             : '';
+
+//     // The address is still worth having, just not worth a line of every card.
+//     name.title = well.database_name + '  ' + well.ip_address;
+
+//     card.querySelector('.well-edit').addEventListener(
+//         'click', () => openModal(well.database_name),
+//     );
+
+//     const remove = card.querySelector('.well-remove');
+
+//     // First click arms, second confirms. Avoids a browser dialog for something
+//     // that only stops monitoring and can be undone by adding the well back.
+//     remove.addEventListener('click', () => {
+//         if (remove.dataset.armed) {
+//             stopWell(well.database_name);
+//             return;
+//         }
+
+//         remove.dataset.armed = '1';
+//         setTimeout(() => delete remove.dataset.armed, 3000);
+//     });
+
+//     initResize(card, well.database_name);
+//     applySize(card, sizes[well.database_name]);
+
+//     return card;
+// }
+
+
 function buildCard(well) {
     const card = el.tplWell.content.firstElementChild.cloneNode(true);
 
     const name = card.querySelector('.well-name');
+    const activity = card.querySelector('.well-activity');
 
     name.textContent = well.database_name;
 
-    // The address is still worth having, just not worth a line of every card.
+    activity.textContent = well.activity
+        ? `(${well.activity})`
+        : '';
+
     name.title = well.database_name + '  ' + well.ip_address;
-
-    card.querySelector('.well-edit').addEventListener(
-        'click', () => openModal(well.database_name),
-    );
-
-    const remove = card.querySelector('.well-remove');
-
-    // First click arms, second confirms. Avoids a browser dialog for something
-    // that only stops monitoring and can be undone by adding the well back.
-    remove.addEventListener('click', () => {
-        if (remove.dataset.armed) {
-            stopWell(well.database_name);
-            return;
-        }
-
-        remove.dataset.armed = '1';
-        setTimeout(() => delete remove.dataset.armed, 3000);
-    });
-
-    initResize(card, well.database_name);
-    applySize(card, sizes[well.database_name]);
 
     return card;
 }
@@ -421,6 +445,15 @@ function renderAlerts(list, groups) {
 }
 
 function updateCard(card, state, groups) {
+    console.log(card);
+    console.log(card.querySelector('.well-activity'));
+
+    const activityNode = card.querySelector('.well-activity');
+
+    activityNode.textContent =
+        state.activity
+            ? `(${state.activity})`
+            : '';
     const list = card.querySelector('.alerts');
     const blank = card.querySelector('.well-blank-text');
 
@@ -428,8 +461,10 @@ function updateCard(card, state, groups) {
         card.dataset.tone = worstTone(groups);
         delete card.dataset.blank;
 
-        card.querySelector('.well-count').textContent =
-            groups.length + (groups.length === 1 ? ' alert' : ' alerts');
+        // card.querySelector('.well-count').textContent =
+        //     groups.length + (groups.length === 1 ? ' alert' : ' alerts');
+
+        card.querySelector('.well-count').textContent = '';
 
         // Only redraw when something actually changed, so a card someone is
         // scrolling through does not jump under them every two seconds.
@@ -520,11 +555,19 @@ async function refresh() {
             return;
         }
 
+        state.activity = wells[name].activity;
+
         updateCard(state.card, state, results[index]);
     });
+    console.log(JSON.stringify(wells, null, 2));
+    if (el.statWells) {
+        el.statWells.textContent = names.length;
+    }
 
-    el.statWells.textContent = names.length;
-    el.statUpdated.textContent = 'updated ' + new Date().toLocaleTimeString();
+    if (el.statUpdated) {
+        el.statUpdated.textContent =
+            'updated ' + new Date().toLocaleTimeString();
+    }
 }
 
 function setLink(state, text) {

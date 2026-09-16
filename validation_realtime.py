@@ -24,6 +24,11 @@ a restart. Parameters are referred to by logical name throughout (SPP, ROP,
 HOOKLOAD ...); ColumnMapper is what turns those into this table's columns.
 """
 
+from importlib import resources
+from email import message
+from fastapi import staticfiles
+from importlib import resources
+from fastapi import param_functions
 from config import Config
 import json
 import re
@@ -63,15 +68,10 @@ def _stamp(path):
 
 
 def _alert_fingerprint(alert):
-    """
-    What makes two alerts "the same alert".
-
-    The text carries a timestamp and the reading that tripped it, and both
-    move every second while the problem behind them does not - Co2 at
-    11.148% and Co2 at 11.352% are one alert, not two. Taking those out
-    leaves the shape of the message, which is what identifies it.
-    """
-    return _NUMBER.sub("#", _TIMESTAMP_PREFIX.sub("", alert))
+    return _NUMBER.sub(
+        "#",
+        _TIMESTAMP_PREFIX.sub("", alert)
+    )
 
 
 @dataclass
@@ -92,6 +92,8 @@ class RealtimeValidator:
         self.activity_rules = activity_rules
         self.conditions = conditions
         self.drilling_criteria = drilling_criteria
+        self._previous_messages = set()
+
 
         # The well file these rules came from, watched for edits. None means
         # nothing to watch - the rules were handed in directly.
@@ -260,6 +262,19 @@ class RealtimeValidator:
 
         return round(value * multiplier, 4)
 
+
+    def _get_total_spm(self, normalized_data):
+        total_spm = 0
+
+        for pump in ["MP1_SPM", "MP2_SPM", "MP3_SPM", "MP4_SPM", "MP5_SPM"]:
+            value = normalized_data.get(pump)
+
+            if value is not None:
+                total_spm += value
+
+        return total_spm
+
+
     # ------------------------------------------------------------------
     def detect_activity(self, data, raise_alert, date_str):
 
@@ -301,18 +316,23 @@ class RealtimeValidator:
             log.warning("Row normalisation: %s", err)
 
         alerts = []
-
-        # The logical names each alert was read from, in step with `alerts`, so
-        # the log can say which column of this table actually tripped it.
         sources = []
+        current_alert_keys = set()
 
-        def raise_alert(message, *params):
-            alerts.append(message)
-            sources.append(params)
+        def raise_alert(message, *params, alert_key=None):
+
+            key = alert_key or message
+
+            current_alert_keys.add(key)
+
+            if key not in self._previous_messages:
+                alerts.append(message)
+                sources.append(params)
 
         date_str = datetime.now().strftime("%d-%m-%y %H-%M-%S")
-        depth = normalized_data.get("BIT_DPT_MD")
-
+        bit_depth = normalized_data.get("BIT_DPT_MD")
+        total_depth=normalized_data.get("DEPTH")
+        depth_unit = self.ranges.get("DEPTH", {}).get("unit", "")
         spp_percentage = 0.0
         totalspm_percentage = 0.0
         rop_percentage = 0.0
@@ -330,31 +350,50 @@ class RealtimeValidator:
                 log.error("activity.json has no rule block for '%s'", activity)
 
             else:
-                for param, is_mandatory in rules.items():
+               for param, is_mandatory in rules.items():
 
-                    # Rule = 1 means value must be > 0
-                    if is_mandatory == 1:
+                    # Only validate parameters marked as mandatory
+                    if is_mandatory != 1:
+                        continue
 
-                        if not self.mapper.is_available(param):
-                            continue  # column absent from this table, warned at startup
-
-                        value = normalized_data.get(param)
-
-                        if value is None or value <= 0:
+                    if param == "SPM":
+                        
+                        value = self._get_total_spm(normalized_data)
+                        if value <= 0:
                             raise_alert(
-                                f"[{date_str}] {param} cannot be 0 in {activity} where BD is:{depth}",
-                                param,
+                                f"[{date_str}] SPM cannot be 0 in {activity} where BD:{bit_depth}{depth_unit}, MD:{total_depth}{depth_unit}",
+                                "SPM",
                             )
-                            
+
+                        continue
+
+                    if not self.mapper.is_available(param):
+                        continue
+
+                    value = normalized_data.get(param)
+
+                    if value is None or value <= 0:
+                        raise_alert(
+                            f"[{date_str}] {param} cannot be 0 in {activity} where BD:{bit_depth}{depth_unit}, MD:{total_depth}{depth_unit}",
+                            param,
+                        )
+                                            
 
         # ------------------------------------------------------------------
         # 2. Ranges
         # ------------------------------------------------------------------
-        for param, limits in self.ranges.items():
-            value = normalized_data.get(param)
 
-            if value is None:
-                continue
+        for param, limits in self.ranges.items():
+            if param == "SPM":
+                value = self._get_total_spm(normalized_data)
+
+                if value <= 0:
+                    continue
+            else:
+                value = normalized_data.get(param)
+
+                if value is None:
+                    continue
 
             # min, max and factor are tolerated as strings in the file
             # ("60"), so they are coerced here rather than compared raw -
@@ -383,18 +422,32 @@ class RealtimeValidator:
             # exists: the table stores it in one unit and ranges.json is in
             # m/hr. Without this the limits were being applied to the raw
             # column, which is the unit they were never written for.
-            value = self._apply_factor(param, value, limits.get("factor"))
-
+            if param.upper() == "ROP":
+                try:
+                    if value != 0:
+                        value = 60 / float(value)
+                    else:
+                        log.warning("ROP is 0, skipping 60/ROP conversion")
+                        continue
+                except Exception as e:
+                    log.error(f"Failed to convert ROP value {value}: {e}")
+                    continue
+            else:
+                value = self._apply_factor(param, value, limits.get("factor"))
+       
+            
             if value < min_val:
                 raise_alert(
-                    f"[{date_str}] {param} - {value} {unit} is below minimum limit {min_text}{unit} BD-{depth}",
+                    f"[{date_str}] {param} : {value:.2f}{unit} below limit {min_text}{unit} BD : {bit_depth}{depth_unit} ",
                     param,
+                    alert_key=f"{param}:{value:.2f}"
                 )
 
             elif value > max_val:
                 raise_alert(
-                    f"[{date_str}] {param} - {value} {unit} is above maximum limit {max_text}{unit}  BD-{depth}",
+                    f"[{date_str}] {param} : {value:.2f}{unit} above limit {max_text}{unit}  BD : {bit_depth}{depth_unit}",
                     param,
+                    alert_key=f"{param}:{value:.2f}"
                 )
 
         # ------------------------------------------------------------------
@@ -413,8 +466,10 @@ class RealtimeValidator:
 
                 if elapsed >= self.ta_tg_duration:
                     raise_alert(
-                        f"[{date_str}] TA is greater than TG where BD-{depth}",
-                        "TA", "TG",
+                        f"[{date_str}] TA is greater than TG where BD-{bit_depth}",
+                        "TA",
+                        "TG",
+                        alert_key=f"TA_TG:{ta:.2f}:{tg:.2f}"
                     )
             else:
                 # Reset timer when condition clears
@@ -452,14 +507,16 @@ class RealtimeValidator:
 
                     if percent_change > self.spp_threshold:
                         raise_alert(
-                            f"[{date_str}] SPP increased by {percent_change:.2f}% where BD-{depth}",
+                            f"[{date_str}] SPP increased by {percent_change:.2f}% where BD-{bit_depth}{depth_unit}",
                             "SPP",
+                            alert_key=f"SPP_INC:{percent_change:.2f}"
                         )
 
                     elif percent_change < -self.spp_threshold:
                         raise_alert(
-                            f"[{date_str}] SPP dropped by {abs(percent_change):.2f}% where BD-{depth}",
+                            f"[{date_str}] SPP dropped by {abs(percent_change):.2f}% where BD-{bit_depth}{depth_unit}",
                             "SPP",
+                            alert_key=f"SPP_INC:{percent_change:.2f}"
                         )
 
                     # Reset baseline
@@ -468,52 +525,52 @@ class RealtimeValidator:
 
                     spp_percentage = round(percent_change, 2)
 
-        # ------------------------------------------------------------------
-        # 5. TotalSPM change
-        # ------------------------------------------------------------------
-        totalspm = normalized_data.get("SPM")
+        # # ------------------------------------------------------------------
+        # # 5. TotalSPM change
+        # # ------------------------------------------------------------------
+        # totalspm = normalized_data.get("SPM")
 
-        if totalspm is not None:
-            current_time = datetime.now()
+        # if totalspm is not None:
+        #     current_time = datetime.now()
 
-            # First value
-            if self.previous_totalspm is None:
-                self.previous_totalspm = totalspm
-                self.previous_totalspm_time = current_time
+        #     # First value
+        #     if self.previous_totalspm is None:
+        #         self.previous_totalspm = totalspm
+        #         self.previous_totalspm_time = current_time
 
-            # Prevent division by zero
-            elif self.previous_totalspm <= 0:
-                self.previous_totalspm = totalspm
-                self.previous_totalspm_time = current_time
+        #     # Prevent division by zero
+        #     elif self.previous_totalspm <= 0:
+        #         self.previous_totalspm = totalspm
+        #         self.previous_totalspm_time = current_time
 
-            else:
-                elapsed = (current_time - self.previous_totalspm_time).total_seconds()
+        #     else:
+        #         elapsed = (current_time - self.previous_totalspm_time).total_seconds()
 
-                if elapsed >= self.totalspm_duration:
+        #         if elapsed >= self.totalspm_duration:
 
-                    percent_change = (
-                        (totalspm - self.previous_totalspm) / self.previous_totalspm
-                    ) * 100
+        #             percent_change = (
+        #                 (totalspm - self.previous_totalspm) / self.previous_totalspm
+        #             ) * 100
 
-                    log.debug("TotalSPM %s -> %s over %.1fs = %.2f%%",
-                              self.previous_totalspm, totalspm, elapsed, percent_change)
+        #             log.debug("TotalSPM %s -> %s over %.1fs = %.2f%%",
+        #                       self.previous_totalspm, totalspm, elapsed, percent_change)
 
-                    if percent_change > self.totalspm_threshold:
-                        raise_alert(
-                            f"[{date_str}] TotalSPM increased by {percent_change:.2f}% Where BD-{depth}",
-                            "SPM",
-                        )
+        #             if percent_change > self.totalspm_threshold:
+        #                 raise_alert(
+        #                     f"[{date_str}] TotalSPM increased by {percent_change:.2f}% Where BD-{depth}",
+        #                     "SPM",
+        #                 )
 
-                    elif percent_change < -self.totalspm_threshold:
-                        raise_alert(
-                            f"[{date_str}] TotalSPM dropped by {abs(percent_change):.2f}% Where BD-{depth}",
-                            "SPM",
-                        )
+        #             elif percent_change < -self.totalspm_threshold:
+        #                 raise_alert(
+        #                     f"[{date_str}] TotalSPM dropped by {abs(percent_change):.2f}% Where BD-{depth}",
+        #                     "SPM",
+        #                 )
 
-                    self.previous_totalspm = totalspm
-                    self.previous_totalspm_time = current_time
+        #             self.previous_totalspm = totalspm
+        #             self.previous_totalspm_time = current_time
 
-                    totalspm_percentage = round(percent_change, 2)
+        #             totalspm_percentage = round(percent_change, 2)
 
         # ------------------------------------------------------------------
         # 6. ROP change
@@ -547,8 +604,9 @@ class RealtimeValidator:
 
                     if percent_change > self.rop_threshold:
                         raise_alert(
-                            f"[{date_str}] ROP increased by {percent_change:.2f}% Where BD-{depth}",
+                            f"[{date_str}] ROP increased by {percent_change:.2f}% Where BD-{bit_depth}{depth_unit}",
                             "ROP",
+                            alert_key=f"ROP_INC:{percent_change:.2f}"
                         )
 
                     self.previous_rop = rop
@@ -561,6 +619,7 @@ class RealtimeValidator:
         # A hookload that does not move at all is the sign of a stalled feed:
         # the rig is still sending rows but the values in them are frozen.
         # ------------------------------------------------------------------
+
         hookload = normalized_data.get("HOOKLOAD")
 
         if hookload is not None:
@@ -580,11 +639,10 @@ class RealtimeValidator:
 
                 if elapsed >= self.hookload_duration:
                     raise_alert(
-                        f"[{date_str}] Please check for data TS. HOOKLOAD has "
-                        f"remained unchanged for {int(elapsed)} seconds",
+                        f"[{date_str}] Please check for data TS. HOOKLOAD has remained unchanged for {int(elapsed)} seconds",
                         "HOOKLOAD",
+                        alert_key="HOOKLOAD_STUCK"
                     )
-
                     # Reset the timer so the alert does not fire every second
                     # for as long as the value stays stuck.
                     self.previous_hookload_time = current_time
@@ -597,10 +655,12 @@ class RealtimeValidator:
         # ------------------------------------------------------------------
 
         self._log_reading(
-            activity, depth, ta, tg,
+            activity, bit_depth, ta, tg,
             spp_percentage, totalspm_percentage, rop_percentage,
             alerts, sources,
         )
+
+        self._previous_messages = current_alert_keys
 
         return ValidationResult(
             alerts=alerts,
@@ -725,6 +785,7 @@ class RealtimeValidator:
         self._last_fingerprint = None
         self._unchanged_since = self._last_logged = None
         self._last_activity = None
+        self._previous_messages.clear()
         log.info("Validator state reset")
 
 
