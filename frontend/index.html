@@ -90,7 +90,6 @@
         <li class="alert">
             <time class="alert-time"></time>
             <span class="alert-msg"></span>
-            <span class="alert-repeat"></span>
         </li>
     </template>
 
@@ -99,7 +98,12 @@
     <div class="modal" id="modal" hidden>
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <header class="modal-head">
-                <h2 id="modal-title">Add a well</h2>
+                <h2 id="modal-title">Settings</h2>
+                <!-- Settings only; a well's pencil opens straight on its rules. -->
+                <div class="modal-tabs" id="modal-tabs" role="tablist">
+                    <button class="modal-tab" type="button" role="tab" data-tab="well">Add a well</button>
+                    <button class="modal-tab" type="button" role="tab" data-tab="names">Display names</button>
+                </div>
                 <button class="icon-btn" id="settings-close" type="button" aria-label="Close">
                     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M18 6 6 18M6 6l12 12" />
@@ -169,6 +173,23 @@
                     <p class="modal-error" id="modal-error" hidden></p>
                     <button class="btn" id="reset-defaults" type="button">Reset to defaults</button>
                     <button class="btn btn-primary" id="add-submit" type="submit">Start monitoring</button>
+                </footer>
+            </form>
+
+            <!-- Display names: one set for every well, so a tab of its own with
+                 its own save - not a section of a well's form, where it was
+                 easy to change a name and press the well's button instead. -->
+            <form class="modal-form" id="display-names-form" autocomplete="off" hidden>
+                <div class="modal-body">
+                    <p class="modal-intro">What each parameter in data/display_name.json is called in alert
+                        text, for every well. To add a parameter, add it to that file - it appears here the next
+                        time Settings is opened.</p>
+                    <div id="fields-display_name"></div>
+                </div>
+
+                <footer class="modal-foot">
+                    <p class="modal-error" id="display-names-error" hidden></p>
+                    <button class="btn btn-primary" id="display-names-save" type="submit">Save display names</button>
                 </footer>
             </form>
         </div>

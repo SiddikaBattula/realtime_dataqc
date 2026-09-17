@@ -7,7 +7,7 @@ so it cannot be shared between wells - build one per agent.
 
 Seven checks run on every reading, in this order:
 
-  1. activity      DRILLING or RIH, from hole depth minus bit depth, then
+  1. activity      DRILLING or NON DRILLING, from hole depth minus bit depth, then
                    every parameter activity.json marks 1 must be above 0
   2. ranges        each parameter inside its min/max from ranges.json,
                    after `factor` converts it into the limits' unit
@@ -30,7 +30,6 @@ from fastapi import staticfiles
 from importlib import resources
 from fastapi import param_functions
 from config import Config
-import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -38,7 +37,9 @@ from pathlib import Path
 
 import well_rules
 from logger import get_logger
+import rule_files
 from column_mapper import ColumnMapper, to_number
+from rule_files import DRILLING, NON_DRILLING, RuleFileError
 
 
 log = get_logger(__name__)
@@ -46,6 +47,18 @@ alert_log = get_logger("qc.alerts")
 
 # How often a set of alerts that has not changed is written out again.
 LOG_REPEAT_SECONDS = 60
+
+# The timestamp every alert starts with, "[17-09-26 05-32-43]". The alerts
+# endpoint and the agent read it back to tell how old an alert is.
+ALERT_TIME_FORMAT = "%d-%m-%y %H-%M-%S"
+
+_ALERT_STAMP = re.compile(r"^\[([^\]]*)\]")
+
+# Subjects raised by checks that only look once per window (or, for HOOKLOAD,
+# once per stall period). A reading in between says nothing about them, so
+# they are not cleared just for not being raised - their own check clears them
+# when it looks and finds nothing.
+EVENT_SUBJECTS = {"SPP_CHANGE", "SPM_CHANGE", "ROP_CHANGE", "HOOKLOAD_STUCK"}
 
 _TIMESTAMP_PREFIX = re.compile(r"^\[[^\]]*\]\s*")
 _NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?")
@@ -64,6 +77,19 @@ def _stamp(path):
     try:
         return Path(path).stat().st_mtime_ns
     except OSError:
+        return None
+
+
+def alert_raised_at(alert):
+    """When an alert was raised, from its "[17-09-26 05-32-43]" prefix, or None."""
+    match = _ALERT_STAMP.match(alert) if isinstance(alert, str) else None
+
+    if not match:
+        return None
+
+    try:
+        return datetime.strptime(match.group(1), ALERT_TIME_FORMAT)
+    except ValueError:
         return None
 
 
@@ -92,7 +118,10 @@ class RealtimeValidator:
         self.activity_rules = activity_rules
         self.conditions = conditions
         self.drilling_criteria = drilling_criteria
-        self._previous_messages = set()
+
+        # subject -> what its last saved alert said (see raise_alert in
+        # validate). A subject is dropped from here when its problem clears.
+        self._last_alerted = {}
 
 
         # The well file these rules came from, watched for edits. None means
@@ -129,13 +158,12 @@ class RealtimeValidator:
 
         self._audit_config()
 
-        try:
-            with open(Config.DISPLAY_NAME_FILE, "r", encoding="utf-8") as f:
-                self.display_names = json.load(f)
-        except Exception:
-            self.display_names = {}
-
-        self._rule_stamp = _stamp(self.rules_path)
+        # What each parameter is called in alert text, from display_name.json.
+        # The stamp starts as something no file can match, so the first call
+        # always reads it.
+        self.display_names = {}
+        self._display_stamp = object()
+        self.reload_display_names_if_changed()
 
     # ------------------------------------------------------------------
     # Rule files
@@ -209,6 +237,49 @@ class RealtimeValidator:
         self._audit_config()
 
         return True
+
+    def reload_display_names_if_changed(self):
+        """
+        Pick up an edit to display_name.json - from Settings or by hand - on
+        the next reading, without a restart.
+
+        The names are shared by every well, so each well's validator watches
+        the same file. One that cannot be read is reported once and the names
+        already in memory stay, the same as with the rules.
+        """
+        stamp = _stamp(Config.DISPLAY_NAME_FILE)
+
+        if stamp == self._display_stamp:
+            return
+
+        self._display_stamp = stamp
+
+        try:
+            names = rule_files.load("display_name")
+
+        except RuleFileError as exc:
+            log.error(
+                "display_name.json could not be loaded (%s) - alerts keep the "
+                "names already in memory", exc,
+            )
+            return
+
+        if not isinstance(names, dict):
+            log.error(
+                "display_name.json must map parameters to names - alerts keep "
+                "the names already in memory"
+            )
+            return
+
+        # A blank or non-text name would print as nothing, so the parameter
+        # keeps its own name instead.
+        self.display_names = {
+            param: name.strip()
+            for param, name in names.items()
+            if isinstance(name, str) and name.strip()
+        }
+
+        log.info("Display names loaded: %d", len(self.display_names))
 
     # ------------------------------------------------------------------
     # Startup sanity: every param used in the rule files must be mappable
@@ -293,14 +364,17 @@ class RealtimeValidator:
         # TypeError here, and the agent reported it as a loop error.
         if total_depth is None or bit_depth is None:
             raise_alert(
-                f"[{date_str}] Cannot determine activity: DEPTH={total_depth}, "
-                f"BIT_DPT_MD={bit_depth}",
+                f"[{date_str}] Cannot determine activity: "
+                f"{self.display_name('DEPTH')}={total_depth}, "
+                f"{self.display_name('BIT_DPT_MD')}={bit_depth}",
                 "DEPTH", "BIT_DPT_MD",
+                subject="ACTIVITY_UNDETERMINED",
+                value=(total_depth is None, bit_depth is None),
             )
             return None
 
         gap = total_depth - bit_depth
-        activity = "DRILLING" if gap <= self.drilling_criteria else "RIH"
+        activity = DRILLING if gap <= self.drilling_criteria else NON_DRILLING
 
         # Only when it changes. At one row a second this line was most of the
         # debug log, and every copy of it said the same thing.
@@ -314,32 +388,52 @@ class RealtimeValidator:
         return activity
 
     def display_name(self, param):
+        """What `param` is called in alert text: its display name, or itself."""
         return self.display_names.get(param, param)
     # ------------------------------------------------------------------
     # Main entry point - mirrors the original validate_realtime_data()
     # ------------------------------------------------------------------
     def validate(self, row):
         self.reload_rules_if_changed(row)
+        self.reload_display_names_if_changed()
 
         normalized_data, row_errors = self.mapper.normalize(row)
         for err in row_errors:
             log.warning("Row normalisation: %s", err)
 
+        # New alerts only - what gets saved and shown on the dashboard.
         alerts = []
         sources = []
-        current_alert_keys = set()
 
-        def raise_alert(message, *params, alert_key=None):
+        # Everything wrong on this reading, repeats included - what the log
+        # reports, so a problem that is still there is not logged as cleared.
+        standing = []
+        standing_sources = []
 
-            key = alert_key or message
+        raised = set()
 
-            current_alert_keys.add(key)
+        def raise_alert(message, *params, subject, value=None):
+            """
+            Record a problem, unless it repeats the last alert about the same thing.
 
-            if key not in self._previous_messages:
-                alerts.append(message)
-                sources.append(params)
+            `subject` is what the alert is about (ROP_CHANGE, RANGE:HOOKLOAD,
+            ZERO:SPP ...). `value` is what it says about it - the part of the
+            message that matters, leaving out the timestamp and the bit depth.
+            "ROP increased by 12%" at BD 2239 and again at BD 2240 is the same
+            alert and is saved once; "ROP increased by 30%" is a new one.
+            """
+            raised.add(subject)
+            standing.append(message)
+            standing_sources.append(params)
 
-        date_str = datetime.now().strftime("%d-%m-%y %H-%M-%S")
+            if subject in self._last_alerted and self._last_alerted[subject] == value:
+                return
+
+            self._last_alerted[subject] = value
+            alerts.append(message)
+            sources.append(params)
+
+        date_str = datetime.now().strftime(ALERT_TIME_FORMAT)
         bit_depth = normalized_data.get("BIT_DPT_MD")
         total_depth=normalized_data.get("DEPTH")
         depth_unit = self.ranges.get("DEPTH", {}).get("unit", "")
@@ -356,7 +450,11 @@ class RealtimeValidator:
             rules = self.activity_rules.get(activity)
 
             if not rules:
-                raise_alert(f"Unknown activity: {activity}")
+                raise_alert(
+                    f"[{date_str}] Unknown activity: {activity}",
+                    subject="ACTIVITY_UNKNOWN",
+                    value=activity,
+                )
                 log.error("activity.json has no rule block for '%s'", activity)
 
             else:
@@ -373,6 +471,8 @@ class RealtimeValidator:
                             raise_alert(
                                 f"[{date_str}] {self.display_name(param)} cannot be 0 in {activity} where BD:{bit_depth}{depth_unit}, MD:{total_depth}{depth_unit}",
                                 "SPM",
+                                subject="ZERO:SPM",
+                                value=activity,
                             )
 
                         continue
@@ -386,6 +486,8 @@ class RealtimeValidator:
                         raise_alert(
                             f"[{date_str}] {self.display_name(param)} cannot be 0 in {activity} where BD:{bit_depth}{depth_unit}, MD:{total_depth}{depth_unit}",
                             param,
+                            subject=f"ZERO:{param}",
+                            value=activity,
                         )
                                             
 
@@ -450,14 +552,16 @@ class RealtimeValidator:
                 raise_alert(
                     f"[{date_str}] {self.display_name(param)} : {value:.2f}{unit} below limit {min_text}{unit} BD : {bit_depth}{depth_unit} ",
                     param,
-                    alert_key=f"{param}:{value:.2f}"
+                    subject=f"RANGE:{param}",
+                    value=f"below {value:.2f}",
                 )
 
             elif value > max_val:
                 raise_alert(
                     f"[{date_str}] {self.display_name(param)} : {value:.2f}{unit} above limit {max_text}{unit}  BD : {bit_depth}{depth_unit}",
                     param,
-                    alert_key=f"{param}:{value:.2f}"
+                    subject=f"RANGE:{param}",
+                    value=f"above {value:.2f}",
                 )
 
         # ------------------------------------------------------------------
@@ -476,10 +580,11 @@ class RealtimeValidator:
 
                 if elapsed >= self.ta_tg_duration:
                     raise_alert(
-                        f"[{date_str}] TA is greater than TG where BD-{bit_depth}",
+                        f"[{date_str}] {self.display_name('TA')} is greater than "
+                        f"{self.display_name('TG')} where BD-{bit_depth}",
                         "TA",
                         "TG",
-                        alert_key=f"TA_TG:{ta:.2f}:{tg:.2f}"
+                        subject="TA_TG",
                     )
             else:
                 # Reset timer when condition clears
@@ -517,17 +622,24 @@ class RealtimeValidator:
 
                     if percent_change > self.spp_threshold:
                         raise_alert(
-                            f"[{date_str}] SPP increased by {percent_change:.2f}% where BD-{bit_depth}{depth_unit}",
+                            f"[{date_str}] {self.display_name('SPP')} increased by {percent_change:.2f}% where BD-{bit_depth}{depth_unit}",
                             "SPP",
-                            alert_key=f"SPP_INC:{percent_change:.2f}"
+                            subject="SPP_CHANGE",
+                            value=f"increased {percent_change:.2f}",
                         )
 
                     elif percent_change < -self.spp_threshold:
                         raise_alert(
-                            f"[{date_str}] SPP dropped by {abs(percent_change):.2f}% where BD-{bit_depth}{depth_unit}",
+                            f"[{date_str}] {self.display_name('SPP')} dropped by {abs(percent_change):.2f}% where BD-{bit_depth}{depth_unit}",
                             "SPP",
-                            alert_key=f"SPP_INC:{percent_change:.2f}"
+                            subject="SPP_CHANGE",
+                            value=f"dropped {abs(percent_change):.2f}",
                         )
+
+                    else:
+                        # Looked and found a steady SPP: the next move is a new
+                        # alert even if it is the same size as the last one.
+                        self._last_alerted.pop("SPP_CHANGE", None)
 
                     # Reset baseline
                     self.previous_spp = spp
@@ -614,10 +726,14 @@ class RealtimeValidator:
 
                     if percent_change > self.rop_threshold:
                         raise_alert(
-                            f"[{date_str}] ROP increased by {percent_change:.2f}% Where BD-{bit_depth}{depth_unit}",
+                            f"[{date_str}] {self.display_name('ROP')} increased by {percent_change:.2f}% Where BD-{bit_depth}{depth_unit}",
                             "ROP",
-                            alert_key=f"ROP_INC:{percent_change:.2f}"
+                            subject="ROP_CHANGE",
+                            value=f"increased {percent_change:.2f}",
                         )
+
+                    else:
+                        self._last_alerted.pop("ROP_CHANGE", None)
 
                     self.previous_rop = rop
                     self.previous_rop_time = current_time
@@ -649,9 +765,9 @@ class RealtimeValidator:
 
                 if elapsed >= self.hookload_duration:
                     raise_alert(
-                        f"[{date_str}] Please check for data TS. HOOKLOAD has remained unchanged for {int(elapsed)} seconds",
+                        f"[{date_str}] Please check for data TS. {self.display_name('HOOKLOAD')} has remained unchanged for {int(elapsed)} seconds",
                         "HOOKLOAD",
-                        alert_key="HOOKLOAD_STUCK"
+                        subject="HOOKLOAD_STUCK",
                     )
                     # Reset the timer so the alert does not fire every second
                     # for as long as the value stays stuck.
@@ -662,15 +778,21 @@ class RealtimeValidator:
                 self.previous_hookload = hookload
                 self.previous_hookload_time = current_time
 
+                self._last_alerted.pop("HOOKLOAD_STUCK", None)
+
         # ------------------------------------------------------------------
+
+        # A problem that has gone away has cleared: if it comes back, even
+        # saying exactly the same thing, that is a new alert.
+        for subject in list(self._last_alerted):
+            if subject not in raised and subject not in EVENT_SUBJECTS:
+                del self._last_alerted[subject]
 
         self._log_reading(
             activity, bit_depth, ta, tg,
             spp_percentage, totalspm_percentage, rop_percentage,
-            alerts, sources,
+            standing, standing_sources,
         )
-
-        self._previous_messages = current_alert_keys
 
         return ValidationResult(
             alerts=alerts,
@@ -714,8 +836,9 @@ class RealtimeValidator:
         LOG_REPEAT_SECONDS, so the log says the problem is still there without
         burying everything else. Every reading is still logged in full at DEBUG.
 
-        Alerts continue to be saved to the database on every reading - this
-        changes what is written to the log, not what is recorded.
+        `alerts` here is everything wrong on this reading, repeats included -
+        not only the new alerts that were saved - so a problem that is still
+        there is never logged as all clear.
         """
         now = datetime.now()
 
@@ -795,7 +918,7 @@ class RealtimeValidator:
         self._last_fingerprint = None
         self._unchanged_since = self._last_logged = None
         self._last_activity = None
-        self._previous_messages.clear()
+        self._last_alerted.clear()
         log.info("Validator state reset")
 
 

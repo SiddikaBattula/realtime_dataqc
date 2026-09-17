@@ -93,6 +93,13 @@ def _read(path):
     if not isinstance(record, dict) or "rules" not in record:
         raise RuleFileError(f"{path.name} is not a well record")
 
+    # A well saved before RIH was renamed NON DRILLING is read under the new
+    # name, so its agent keeps running those checks without a re-save.
+    rules = record["rules"]
+
+    if isinstance(rules, dict) and "activity" in rules:
+        rules["activity"] = rule_files.rename_old_activities(rules["activity"])
+
     return record
 
 

@@ -12,6 +12,8 @@
       PUT    /wells/{name}/rules        change that well's rules
       DELETE /wells/{name}              stop monitoring one
       GET    /alerts/{name}             what that well's agent has raised
+      GET    /rules/display_name        what each parameter is called in alerts
+      PUT    /rules/display_name        change those names, for every well
 
   Rules belong to one well: what is entered for a well affects that well only.
 
@@ -55,9 +57,13 @@ const POLL_MS = 2500;
 // "all clear" - the manager takes up to five seconds to notice a new well.
 const STARTING_MS = 8000;
 
-// How many alerts to pull per well. They repeat once a second while a problem
-// stands, so this is a window of recent history, not the whole file.
-const ALERT_LIMIT = 400;
+// How long an alert stays on its card. The server does the ageing, against the
+// same clock that stamped the alert.
+const ALERT_MAX_AGE_MIN = 30;
+
+// Most alerts a card will hold, newest kept. A backstop for a well raising
+// something new every second, not a window that is expected to be reached.
+const ALERT_LIMIT = 1000;
 
 // Resize limits. Height is in pixels of alert list; width is in grid columns.
 const MIN_LIST_H = 90;
@@ -89,9 +95,13 @@ const el = {
     toasts: document.getElementById('toasts'),
     tplWell: document.getElementById('tpl-well'),
     tplAlert: document.getElementById('tpl-alert'),
+    modalTabs: document.getElementById('modal-tabs'),
+    displayNamesForm: document.getElementById('display-names-form'),
+    displayNamesSave: document.getElementById('display-names-save'),
+    displayNamesError: document.getElementById('display-names-error'),
 };
 
-// database_name -> { card, firstSeen, signature }
+// database_name -> { card, firstSeen, activity }
 const cards = new Map();
 
 let polling = null;
@@ -151,11 +161,12 @@ function parseAlert(raw) {
   the colour of the row's edge - enough to scan a card without reading it.
 */
 const KINDS = [
-    [/is above maximum limit/i, 'critical'],
-    [/TA is greater than TG/i, 'critical'],
+    [/above limit/i, 'critical'],
+    // TA and TG may carry display names, so only the shape is matched.
+    [/ is greater than /i, 'critical'],
     [/Cannot determine activity/i, 'critical'],
     [/Unknown activity/i, 'critical'],
-    [/is below minimum limit/i, 'warn'],
+    [/below limit/i, 'warn'],
     [/cannot be 0/i, 'warn'],
     [/remained unchanged/i, 'warn'],
 ];
@@ -172,50 +183,37 @@ function classify(message) {
 }
 
 /*
-  Collapse the repeats.
+  The card is a log: every alert on its own line, newest first, nothing merged
+  or updated in place. The agent only saves an alert when it says something
+  new, so there are no repeats here to collapse.
 
-  A problem that stands for a minute is written to the file once a second, and
-  each copy carries a slightly different reading. Stripping the numbers out
-  leaves the shape of the message, which is what makes two of them the same
-  alert - the same idea the agent's own log uses. What comes back is one row
-  per distinct problem, most recently seen first, carrying how many times it
-  has been raised and the reading that tripped it last.
+  Each one gets a key that stays the same from one poll to the next - the raw
+  text, which carries its own timestamp, plus a count in case the same text
+  was ever saved twice - so the card can add new lines without redrawing the
+  ones already on it.
 */
-function groupAlerts(raw) {
-    const groups = new Map();
+function listAlerts(raw) {
+    const seen = new Map();
 
-    raw.forEach((entry, index) => {
-        const { time, message } = parseAlert(entry);
-        const key = message.replace(/[-+]?\d+(?:\.\d+)?/g, '#');
+    const alerts = raw.map((entry) => {
+        const text = String(entry);
+        const occurrence = (seen.get(text) || 0) + 1;
 
-        const existing = groups.get(key);
+        seen.set(text, occurrence);
 
-        if (existing) {
-            existing.count += 1;
-            existing.message = message;
-            existing.time = time;
-            existing.index = index;
-            return;
-        }
+        const { time, message } = parseAlert(text);
 
-        groups.set(key, {
-            key,
-            message,
-            time,
-            count: 1,
-            index,
-            ...classify(message),
-        });
+        return { key: text + '#' + occurrence, time, message, ...classify(message) };
     });
 
-    return [...groups.values()].sort((a, b) => b.index - a.index);
+    return alerts.reverse();
 }
 
 const WORST = { critical: 3, warn: 2, info: 1 };
 
-function worstTone(groups) {
-    return groups.reduce(
-        (worst, group) => (WORST[group.tone] > WORST[worst] ? group.tone : worst),
+function worstTone(alerts) {
+    return alerts.reduce(
+        (worst, alert) => (WORST[alert.tone] > WORST[worst] ? alert.tone : worst),
         'info',
     );
 }
@@ -423,31 +421,74 @@ function buildCard(well) {
 
     name.title = well.database_name + '  ' + well.ip_address;
 
+    card.querySelector('.well-edit').addEventListener(
+        'click', () => openModal(well.database_name),
+    );
+
+    const remove = card.querySelector('.well-remove');
+
+    // First click arms it ("Stop?"), a second within three seconds confirms.
+    // No browser dialog, and one stray click cannot stop a well.
+    remove.addEventListener('click', () => {
+        if (remove.dataset.armed) {
+            stopWell(well.database_name);
+            return;
+        }
+
+        remove.dataset.armed = '1';
+        setTimeout(() => delete remove.dataset.armed, 3000);
+    });
+
+    // The drag handles, and the size this well was last left at.
+    initResize(card, well.database_name);
+    applySize(card, sizes[well.database_name]);
+
     return card;
 }
 
-function renderAlerts(list, groups) {
-    list.replaceChildren();
+function alertRow(alert) {
+    const row = el.tplAlert.content.firstElementChild.cloneNode(true);
 
-    for (const group of groups) {
-        const row = el.tplAlert.content.firstElementChild.cloneNode(true);
+    row.dataset.key = alert.key;
+    row.dataset.tone = alert.tone;
+    row.querySelector('.alert-time').textContent = alert.time;
+    row.querySelector('.alert-msg').textContent = alert.message;
 
-        row.dataset.tone = group.tone;
-        row.querySelector('.alert-time').textContent = group.time;
-        row.querySelector('.alert-msg').textContent = group.message;
+    return row;
+}
 
-        // Only when it has actually repeated - a lone alert says nothing.
-        row.querySelector('.alert-repeat').textContent =
-            group.count > 1 ? '\u00D7' + group.count : '';
+/*
+  Bring the list in line with `alerts` (newest first) by touching only what
+  changed: new alerts are slotted in at the top, ones that have aged out drop
+  off the bottom. Rebuilding the whole list instead would replay every row's
+  entry animation each time one alert arrived, and jump a card someone is
+  scrolled down in.
+*/
+function renderAlerts(list, alerts) {
+    const wanted = new Set(alerts.map((alert) => alert.key));
 
-        list.append(row);
+    for (const row of [...list.children]) {
+        if (!wanted.has(row.dataset.key)) {
+            row.remove();
+        }
+    }
+
+    alerts.forEach((alert, position) => {
+        const current = list.children[position];
+
+        if (!current || current.dataset.key !== alert.key) {
+            list.insertBefore(alertRow(alert), current || null);
+        }
+    });
+
+    // Every position up to alerts.length now holds the right row, so anything
+    // past it is left over from an out-of-order file and can go.
+    while (list.children.length > alerts.length) {
+        list.lastElementChild.remove();
     }
 }
 
-function updateCard(card, state, groups) {
-    console.log(card);
-    console.log(card.querySelector('.well-activity'));
-
+function updateCard(card, state, alerts) {
     const activityNode = card.querySelector('.well-activity');
 
     activityNode.textContent =
@@ -457,33 +498,23 @@ function updateCard(card, state, groups) {
     const list = card.querySelector('.alerts');
     const blank = card.querySelector('.well-blank-text');
 
-    if (groups.length) {
-        card.dataset.tone = worstTone(groups);
+    if (alerts.length) {
+        card.dataset.tone = worstTone(alerts);
         delete card.dataset.blank;
-
-        // card.querySelector('.well-count').textContent =
-        //     groups.length + (groups.length === 1 ? ' alert' : ' alerts');
 
         card.querySelector('.well-count').textContent = '';
 
-        // Only redraw when something actually changed, so a card someone is
-        // scrolling through does not jump under them every two seconds.
-        const signature = groups.map((g) => g.key + ':' + g.count).join('|');
-
-        if (state.signature !== signature) {
-            state.signature = signature;
-            renderAlerts(list, groups);
-        }
+        renderAlerts(list, alerts);
 
         return;
     }
 
-    // Nothing raised. Either the agent has not connected yet, or all is well.
+    // Nothing in the last ALERT_MAX_AGE_MIN minutes. Either the agent has not
+    // connected yet, or all is well.
     const starting = Date.now() - state.firstSeen < STARTING_MS;
 
     card.dataset.tone = 'ok';
     card.dataset.blank = '1';
-    state.signature = '';
     list.replaceChildren();
 
     card.querySelector('.well-count').textContent = starting ? 'starting' : 'clear';
@@ -522,7 +553,7 @@ async function refresh() {
         if (!cards.has(name)) {
             const card = buildCard(wells[name]);
 
-            cards.set(name, { card, firstSeen: Date.now(), signature: null });
+            cards.set(name, { card, firstSeen: Date.now() });
             el.grid.append(card);
         }
     }
@@ -542,8 +573,12 @@ async function refresh() {
     // rest of the board.
     const results = await Promise.all(
         names.map((name) =>
-            api('/alerts/' + encodeURIComponent(name) + '?limit=' + ALERT_LIMIT)
-                .then((body) => groupAlerts(body.alerts || []))
+            api(
+                '/alerts/' + encodeURIComponent(name)
+                + '?limit=' + ALERT_LIMIT
+                + '&max_age_minutes=' + ALERT_MAX_AGE_MIN,
+            )
+                .then((body) => listAlerts(body.alerts || []))
                 .catch(() => []),
         ),
     );
@@ -559,7 +594,7 @@ async function refresh() {
 
         updateCard(state.card, state, results[index]);
     });
-    console.log(JSON.stringify(wells, null, 2));
+
     if (el.statWells) {
         el.statWells.textContent = names.length;
     }
@@ -904,6 +939,107 @@ function renderRules() {
     renderRanges();
 }
 
+// ---- display names -------------------------------------------------------
+//
+// Not part of any well: one file, data/display_name.json, shared by every well
+// and edited on its own tab in Settings with its own save. A name typed here is
+// what alerts call the parameter - "Weight on bit" rather than "WOB" - from the
+// next reading after it is saved.
+//
+// The file decides which parameters are listed: exactly the ones in it, in its
+// order. One added to the file by hand is here the next time Settings opens.
+
+let displayNames = null;   // parameter -> name, as being edited
+
+function renderDisplayNames() {
+    const host = document.getElementById('fields-display_name');
+    host.replaceChildren();
+
+    const params = Object.keys(displayNames);
+
+    if (!params.length) {
+        const note = document.createElement('p');
+        note.className = 'modal-intro';
+        note.textContent = 'display_name.json has no parameters yet. Add one there, '
+            + 'e.g. "WOB": "Weight on bit", and it appears here.';
+        host.append(note);
+        return;
+    }
+
+    const grid = table([
+        { label: 'Parameter', width: '132px' },
+        { label: 'Shown in alerts as', width: 'minmax(200px, 1fr)' },
+    ]);
+
+    for (const param of params) {
+        const line = row(grid, param);
+
+        // Kept even when blank: the list comes from the file, so a name that
+        // was deleted on save would take its parameter off this tab for good.
+        line.append(cell(displayNames[param], (text) => {
+            displayNames[param] = text.trim();
+        }, { placeholder: param, title: 'Shown in alerts instead of ' + param }));
+    }
+
+    host.append(wrapScroll(grid));
+}
+
+function showNamesError(message) {
+    el.displayNamesError.textContent = message || '';
+    el.displayNamesError.hidden = !message;
+}
+
+// A form of its own, so Enter in any box saves the names too.
+el.displayNamesForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+
+    if (displayNames === null) {
+        return;
+    }
+
+    showNamesError('');
+
+    const blank = Object.keys(displayNames).filter((param) => !displayNames[param]);
+
+    if (blank.length) {
+        showNamesError(
+            blank.join(', ') + (blank.length === 1 ? ' needs' : ' need') + ' a name. '
+            + 'To show a parameter as it is, type its own name (e.g. ' + blank[0] + ').',
+        );
+        return;
+    }
+
+    el.displayNamesSave.disabled = true;
+
+    try {
+        await api('/rules/display_name', {
+            method: 'PUT',
+            body: JSON.stringify(displayNames),
+        });
+
+        toast('Display names saved — new alerts use them within a second');
+        closeModal();
+    } catch (err) {
+        showNamesError(err.message);
+    } finally {
+        el.displayNamesSave.disabled = false;
+    }
+});
+
+/* Settings has two tabs: adding a well, and the display names. */
+function showTab(tab) {
+    for (const button of el.modalTabs.querySelectorAll('.modal-tab')) {
+        button.setAttribute('aria-selected', String(button.dataset.tab === tab));
+    }
+
+    el.form.hidden = tab !== 'well';
+    el.displayNamesForm.hidden = tab !== 'names';
+}
+
+for (const button of el.modalTabs.querySelectorAll('.modal-tab')) {
+    button.addEventListener('click', () => showTab(button.dataset.tab));
+}
+
 
 // ---------------------------------------------------------------------------
 // Adding, editing and removing wells
@@ -917,17 +1053,27 @@ function showError(message) {
 /*
   Open the dialog.
 
-  With no name it is a new well and the form opens on the template from data/,
-  so only the handful of values that differ for this rig have to be touched.
-  With a name it is that well's own saved rules, and saving replaces them.
+  With no name it is Settings: a new well, on the template from data/ so only
+  the handful of values that differ for this rig have to be touched, and the
+  display names on their own tab. With a name it is that well's own saved
+  rules and nothing else, and saving replaces them.
 */
 async function openModal(name) {
     editing = name || null;
     showError('');
+    showNamesError('');
 
-    el.modalTitle.textContent = editing ? 'Edit ' + editing : 'Add a well';
+    // Display names apply to every well, so they are only offered in Settings.
+    // Under one well's pencil they would look like that well's own.
+    el.modalTabs.hidden = Boolean(editing);
+    showTab('well');
+
+    el.modalTitle.textContent = editing ? 'Edit ' + editing : 'Settings';
     el.submit.textContent = editing ? 'Save rules' : 'Start monitoring';
+    // Editing saves the rules only (PUT /wells/{name}/rules keeps the address),
+    // so neither box can be changed - an edited IP would be silently dropped.
     el.dbName.disabled = Boolean(editing);
+    el.ipAddress.disabled = Boolean(editing);
 
     el.modal.hidden = false;
 
@@ -952,12 +1098,28 @@ async function openModal(name) {
     } catch (err) {
         showError('Could not load the rules: ' + err.message);
     }
+
+    if (editing) {
+        return;
+    }
+
+    // Separately, so a problem with the names does not stop a well being added.
+    try {
+        displayNames = await api('/rules/display_name');
+        renderDisplayNames();
+    } catch (err) {
+        showNamesError('Could not load the display names: ' + err.message);
+    }
 }
 
 function closeModal() {
     el.modal.hidden = true;
     draft = null;
     editing = null;
+    displayNames = null;
+
+    // Not left for the next opening to show while the names are fetched again.
+    document.getElementById('fields-display_name').replaceChildren();
 }
 
 async function stopWell(name) {
@@ -980,6 +1142,18 @@ el.form.addEventListener('submit', async (event) => {
 
     if (!database_name || !ip_address) {
         showError('A database name and an IP address are both needed.');
+        return;
+    }
+
+    // POST /wells with a name already monitored replaces that well's rules
+    // with this form - which opened on the template, not on its own rules.
+    // Changing an existing well is what its pencil is for.
+    if (!editing && cards.has(database_name)) {
+        showError(
+            database_name + ' is already being monitored. Adding it again would replace '
+            + 'its rules with the defaults in this form - to change them, use the '
+            + 'pencil on its card.',
+        );
         return;
     }
 

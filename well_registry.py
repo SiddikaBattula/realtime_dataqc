@@ -24,6 +24,11 @@ _LOCK = threading.RLock()
 # database_name -> {"database_name", "ip_address", "rules"}
 _WELLS = {}
 
+# database_name -> the activity its agent last worked out (DRILLING,
+# NON DRILLING, or None when it cannot tell). Runtime only: it is not part of the saved record,
+# because it describes what the rig is doing now, not how it is to be checked.
+_ACTIVITY = {}
+
 
 def load_saved():
     """Bring back every well on disk. Returns how many."""
@@ -56,6 +61,7 @@ def remove(database_name):
     """Drop a well and its file. True if it was there."""
     with _LOCK:
         existed = _WELLS.pop(database_name, None) is not None
+        _ACTIVITY.pop(database_name, None)
 
     well_rules.delete(database_name)
 
@@ -73,18 +79,32 @@ def all_wells():
         return dict(_WELLS)
 
 
+def set_activity(database_name, activity):
+    """
+    Record what a well's agent says the rig is doing.
+
+    Ignored for a well that has been removed: its agent may still be finishing
+    the reading it was in the middle of, and must not bring the entry back.
+    """
+    with _LOCK:
+        if database_name in _WELLS:
+            _ACTIVITY[database_name] = activity
+
+
 def summaries():
     """
-    Every well without its rules.
+    Every well without its rules, with the activity its agent last saw.
 
-    The dashboard polls this every couple of seconds and only needs the name
-    and address; the rule blocks are large and are fetched on demand instead.
+    The dashboard polls this every couple of seconds and only needs the name,
+    address and activity; the rule blocks are large and are fetched on demand
+    instead.
     """
     with _LOCK:
         return {
             name: {
                 "database_name": record["database_name"],
                 "ip_address": record["ip_address"],
+                "activity": _ACTIVITY.get(name),
             }
             for name, record in _WELLS.items()
         }

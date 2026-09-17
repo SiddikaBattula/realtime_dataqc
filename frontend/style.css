@@ -535,7 +535,10 @@ body::before {
 */
 .alerts {
     list-style: none;
-    margin: 0;
+    /* Clear of the right-edge resize strip (.well-grip[data-dir="e"]), which
+       would otherwise sit on top of the scrollbar and turn every attempt to
+       scroll the log into a resize. */
+    margin: 0 7px 0 0;
     padding: 3px 0;
     height: var(--list-h);
     overflow-y: auto;
@@ -615,10 +618,6 @@ body::before {
 
 .alert[data-tone="critical"] .alert-msg {
     color: #FFDDE3;
-}
-
-.alert-repeat {
-    display: none;
 }
 
 /* Card body when there is nothing wrong. */
@@ -891,6 +890,48 @@ body[data-resizing] {
     font-size: 14px;
     font-weight: 600;
     letter-spacing: -.01em;
+}
+
+/* Settings' two tabs. Neutral on purpose: colour on this page means status. */
+.modal-tabs {
+    display: flex;
+    gap: 4px;
+    margin-right: auto;
+}
+
+.modal-tabs[hidden],
+.modal-form[hidden] {
+    display: none;
+}
+
+.modal-tab {
+    padding: 5px 11px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-3);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .14s, color .14s, border-color .14s;
+}
+
+.modal-tab:hover {
+    color: var(--text);
+}
+
+.modal-tab[aria-selected="true"] {
+    border-color: var(--border);
+    background: var(--surface-3);
+    color: var(--text);
+}
+
+.modal-intro {
+    margin: 0 0 4px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-3);
 }
 
 .field {
@@ -1261,6 +1302,9 @@ body[data-resizing] {
     right: 18px;
     bottom: 18px;
     z-index: 60;
+    /* Text only, and they sit over the dialog's save buttons for a few seconds
+       after a save - clicks go through to whatever is underneath. */
+    pointer-events: none;
     display: grid;
     gap: 8px;
     justify-items: end;

@@ -13,7 +13,7 @@ nothing has to be restarted.
     alerts         GET /alerts/{database_name}     <- what that well has raised
 
     one value      PUT /rules/ranges/H2S           <- the everyday change
-                   PUT /rules/activity/RIH/WOB
+                   PUT /rules/activity/DRILLING/WOB
                    PUT /rules/conditions/SPP
 
     whole file     GET/PUT /rules/{name}           <- bulk edits, or a look at
@@ -21,6 +21,7 @@ nothing has to be restarted.
 """
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from enum import Enum
@@ -39,6 +40,7 @@ import well_rules
 from config import Config
 from logger import setup_logging, get_logger
 from rule_files import RuleFileError
+from validation_realtime import alert_raised_at
 
 setup_logging()
 
@@ -62,12 +64,13 @@ class WellRequest(BaseModel):
     )
 
 class RuleFile(str, Enum):
-    """The four files, as a dropdown in the docs page."""
+    """The files in data/, as a dropdown in the docs page."""
 
     activity = "activity"
     conditions = "conditions"
     ranges = "ranges"
     column_mapping = "column_mapping"
+    display_name = "display_name"
 
 
 # ---------------------------------------------------------------------------
@@ -269,9 +272,6 @@ def add_well(well: WellRequest):
 def get_wells():
     wells = well_registry.summaries()
 
-    for name, well in wells.items():
-        well["activity"] = "DRILLING"   # temporary test
-
     return {"count": len(wells), "wells": wells}
 
 
@@ -382,7 +382,9 @@ def set_range(
 )
 def set_activity_flag(
     flag: ActivityFlag,
-    activity: str = PathParam(..., description="e.g. DRILLING or RIH", examples=["RIH"]),
+    activity: str = PathParam(
+        ..., description="e.g. DRILLING or NON DRILLING", examples=["NON DRILLING"]
+    ),
     parameter: str = PathParam(..., description="Logical name, e.g. WOB", examples=["WOB"]),
 ):
     """
@@ -497,7 +499,7 @@ def set_column_names(
 # Whole files
 # ---------------------------------------------------------------------------
 
-@app.get("/rules", summary="What the four files are and when each last changed")
+@app.get("/rules", summary="What the files in data/ are and when each last changed")
 def list_rules():
     listed = []
 
@@ -527,7 +529,7 @@ def replace_rules(
         ...,
         description="The whole file. Anything not included is removed - use PATCH "
                     "to change part of it.",
-        examples=[{"DRILLING": {"ROP": 1, "WOB": 1}, "RIH": {"HOOKLOAD": 1}}],
+        examples=[{"DRILLING": {"ROP": 1, "WOB": 1}, "NON DRILLING": {"HOOKLOAD": 1}}],
     ),
 ):
     saved = _guard(lambda: rule_files.save(name.value, document))
@@ -549,12 +551,22 @@ def get_well_alerts(
         le=5000,
         description="How many of the most recent alerts to return",
     ),
+    max_age_minutes: Optional[float] = Query(
+        None,
+        gt=0,
+        description="Only alerts raised within this many minutes. Leave it out "
+                    "for the whole file.",
+    ),
 ):
     """
     The alerts a well's agent has written, newest last.
 
     A well that was only just added has no file yet - that is an empty list,
     not an error, because the agent takes a few seconds to start.
+
+    The age is worked out here rather than in the browser: the timestamps are
+    this machine's local time, and a browser in another timezone or with a
+    drifting clock would clear them at the wrong moment.
     """
     # The same relative path the agent writes to in WellAgent.save_alerts. Both
     # run in this process, so they resolve against the same directory; keeping
@@ -581,6 +593,16 @@ def get_well_alerts(
             status_code=500,
             detail=f"The alert file for '{database_name}' is not a list",
         )
+
+    if max_age_minutes is not None:
+        cutoff = datetime.now() - timedelta(minutes=max_age_minutes)
+
+        # One with no readable time is left out: it could never be aged, so
+        # it would never clear.
+        alerts = [
+            alert for alert in alerts
+            if (raised := alert_raised_at(alert)) is not None and raised >= cutoff
+        ]
 
     return {
         "database_name": database_name,

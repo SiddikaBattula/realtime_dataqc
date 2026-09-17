@@ -34,7 +34,14 @@ FILES = {
     "conditions": Config.CONDITIONS_FILE,
     "ranges": Config.RANGES_FILE,
     "column_mapping": Config.COLUMN_MAP_FILE,
+    # Unlike the four above, not a template: what each parameter is called in
+    # alert text, shared by every well and read by every agent as it changes.
+    "display_name": Config.DISPLAY_NAME_FILE,
 }
+
+# Files that may be missing - no display names just means every parameter is
+# called by its own name.
+OPTIONAL_FILES = {"display_name"}
 
 # What the validator reads out of conditions.json when it starts. Deleting one
 # of these is a KeyError at the next reload, so a write that drops one is
@@ -60,6 +67,9 @@ def load(name):
     path = path_for(name)
 
     if not path.exists():
+        if name in OPTIONAL_FILES:
+            return {}
+
         raise RuleFileError(f"{path.name} does not exist")
 
     try:
@@ -255,11 +265,29 @@ def _check_column_mapping(document, known):
         )
 
 
+def _check_display_name(document, known):
+    # Empty is allowed: no display names at all.
+    if not isinstance(document, dict):
+        raise RuleFileError("display_name.json must be a JSON object")
+
+    # Not checked against column_mapping: that is only the template, and a
+    # well may map a parameter the template does not have.
+    for param, name in document.items():
+        if not param.strip():
+            raise RuleFileError("display_name.json: a parameter name cannot be blank")
+
+        if not isinstance(name, str) or not name.strip():
+            raise RuleFileError(
+                f"display_name.json: '{param}' must be shown as some text, got {name!r}"
+            )
+
+
 CHECKS = {
     "activity": _check_activity,
     "conditions": _check_conditions,
     "ranges": _check_ranges,
     "column_mapping": _check_column_mapping,
+    "display_name": _check_display_name,
 }
 
 
@@ -360,6 +388,30 @@ def _dedupe_aliases(document):
     return tidy
 
 
+def _tidy_display_names(document):
+    """
+    Spaces trimmed, and a name left blank dropped.
+
+    A blank box in the form means "call it by its own name", which is what
+    having no entry already does - storing "" would print an empty name.
+    Anything that is not text is left for the check to refuse.
+    """
+    tidy = {}
+
+    for param, name in document.items():
+        param = param.strip()
+
+        if isinstance(name, str):
+            name = name.strip()
+
+            if not name:
+                continue
+
+        tidy[param] = name
+
+    return tidy
+
+
 def _already_broken(name, complaint):
     """
     Was the file on disk failing this same check before the change?
@@ -393,6 +445,9 @@ def save(name, document):
 
     if name == "column_mapping" and isinstance(document, dict):
         document = _dedupe_aliases(document)
+
+    if name == "display_name" and isinstance(document, dict):
+        document = _tidy_display_names(document)
 
     try:
         validate(name, document)
@@ -445,6 +500,39 @@ def save(name, document):
 # The order the data folder lists them in, which is the order the form asks
 # for them in.
 RULE_BLOCKS = ("activity", "column_mapping", "conditions", "ranges")
+
+# The two activities the validator tells apart: bit on bottom, and anything
+# else. The second used to be called RIH, and rules saved before the rename
+# still have that block under the old name.
+DRILLING = "DRILLING"
+NON_DRILLING = "NON DRILLING"
+
+_OLD_ACTIVITY_NAMES = {"RIH": NON_DRILLING}
+
+
+def rename_old_activities(activity):
+    """
+    `activity` with a block still under an old name moved to its new one.
+
+    Without this a well saved before the rename keeps its off-bottom rules
+    under RIH, which the validator never asks for: every NON DRILLING reading
+    would raise "Unknown activity" and none of those checks would run. If a
+    block already exists under the new name, that one is kept.
+    """
+    if not isinstance(activity, dict):
+        return activity
+
+    renamed = {}
+
+    for name, rules in activity.items():
+        new_name = _OLD_ACTIVITY_NAMES.get(name, name)
+
+        if new_name != name and new_name in activity:
+            continue
+
+        renamed[new_name] = rules
+
+    return renamed
 
 
 def _check_mapping_shape(document):
@@ -512,6 +600,8 @@ def tidy_set(rules):
 
     tidy = {block: _tidy_numbers(rules.get(block)) for block in RULE_BLOCKS}
 
+    tidy["activity"] = rename_old_activities(tidy["activity"])
+
     if isinstance(tidy.get("column_mapping"), dict):
         tidy["column_mapping"] = _dedupe_aliases(tidy["column_mapping"])
 
@@ -520,4 +610,8 @@ def tidy_set(rules):
 
 def template():
     """The four files in data/, as the starting point for a new well."""
-    return {block: load(block) for block in RULE_BLOCKS}
+    rules = {block: load(block) for block in RULE_BLOCKS}
+
+    rules["activity"] = rename_old_activities(rules["activity"])
+
+    return rules

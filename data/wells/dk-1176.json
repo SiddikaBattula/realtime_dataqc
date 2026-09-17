@@ -26,7 +26,7 @@
                 "CONDUCT_IN": 1,
                 "CONDUCT_OUT": 1
             },
-            "RIH": {
+            "NON DRILLING": {
                 "ROP": 0,
                 "HOOKLOAD": 1,
                 "WOB": 0,
@@ -195,7 +195,7 @@
         "ranges": {
             "DEPTH": {
                 "min": 0,
-                "max": 10000,
+                "max": 20000,
                 "unit": "m",
                 "factor": 1
             },

@@ -51,7 +51,7 @@ class Config:
     RETRY_INTERVAL = float(os.getenv("RETRY_INTERVAL", "5"))
 
     # Hole depth minus bit depth, in metres: at or below this the bit is on
-    # bottom (DRILLING), above it the string is moving (RIH).
+    # bottom (DRILLING), above it it is not (NON DRILLING).
     DRILLING_CRITERIA = float(os.getenv("DRILLING_CRITERIA", "0.1"))
 
     # ---- where things live -------------------------------------------
@@ -76,6 +76,10 @@ class Config:
     # ---- alert storage -------------------------------------------------
     # Alerts are written to output/<database_name>/alerts.json and nowhere
     # else - nothing is inserted into any database.
+
+    # Hours an alert is kept in that file. Older ones are removed by the
+    # well's agent (see WellAgent._prune_if_due).
+    ALERT_RETENTION_HOURS = float(os.getenv("ALERT_RETENTION_HOURS", "24"))
 
     # ---- the rule-file API (config_api.py) -----------------------------
     CONFIG_API_HOST = os.getenv("CONFIG_API_HOST", "0.0.0.0")
