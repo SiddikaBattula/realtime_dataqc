@@ -2,10 +2,10 @@
 Each well's own rules, on disk.
 
 The four files in data/ used to be the rules: every well was checked against
-the same ranges, the same activity flags, the same column mapping. That only
-holds while every rig is the same rig. A well now carries its own copy of all
-four, entered in the dashboard when the well is added, and nothing it contains
-affects any other well.
+the same ranges, the same activity flags, the same column mapping, and the one
+DRILLING_CRITERIA in .env. That only holds while every rig is the same rig. A
+well now carries its own copy of all of it, entered in the dashboard when the
+well is added, and nothing it contains affects any other well.
 
 One file per well, in data/wells/:
 
@@ -13,12 +13,18 @@ One file per well, in data/wells/:
         "database_name": "kj-16",
         "ip_address": "10.0.0.5",
         "rules": {
-            "activity":       {...},
-            "column_mapping": {...},
-            "conditions":     {...},
-            "ranges":         {...}
+            "activity":          {...},
+            "column_mapping":    {...},
+            "conditions":        {...},
+            "ranges":            {...},
+            "drilling_criteria": 0.1
         }
     }
+
+drilling_criteria is the odd one out: a single number rather than a block. It
+is the metres of hole depth minus bit depth that still count as on bottom, and
+so it is what decides whether a reading is checked as DRILLING or as NON
+DRILLING - one number that changes which whole set of activity rules applies.
 
 data/*.json stay where they are and keep their meaning, but it is now the
 template a new well starts from rather than the rules anything runs on. That
@@ -68,7 +74,8 @@ def path_for(database_name):
 
 
 def template():
-    """What a new well's form opens with: the four files in data/."""
+    """What a new well's form opens with: the four files in data/, and the
+    default off-bottom margin."""
     return rule_files.template()
 
 
@@ -93,12 +100,23 @@ def _read(path):
     if not isinstance(record, dict) or "rules" not in record:
         raise RuleFileError(f"{path.name} is not a well record")
 
-    # A well saved before RIH was renamed NON DRILLING is read under the new
-    # name, so its agent keeps running those checks without a re-save.
     rules = record["rules"]
 
-    if isinstance(rules, dict) and "activity" in rules:
-        rules["activity"] = rule_files.rename_old_activities(rules["activity"])
+    if isinstance(rules, dict):
+        # A well saved before RIH was renamed NON DRILLING is read under the
+        # new name, so its agent keeps running those checks without a re-save.
+        if "activity" in rules:
+            rules["activity"] = rule_files.rename_old_activities(rules["activity"])
+
+        # A well saved before the criteria moved out of .env has no value for
+        # it. Filling in the old shared default here means its agent keeps
+        # deciding activity exactly as it did before, and - the part that
+        # matters - its form opens with a number in the box, so saving any
+        # other change does not come back "the rules are missing
+        # drilling_criteria" about a field nobody touched.
+        rules.setdefault(
+            "drilling_criteria", rule_files.DEFAULT_DRILLING_CRITERIA
+        )
 
     return record
 

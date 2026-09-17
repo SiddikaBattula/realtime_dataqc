@@ -51,24 +51,61 @@ const API_BASE = (() => {
     return location.protocol + '//' + location.hostname + ':' + API_PORT;
 })();
 
-const POLL_MS = 5000;
+/*
+  Every timing and limit below is set in .env and served by GET /settings, so
+  this file is not where any of them is changed. What is written here is only
+  the fallback used until that call answers, and if it never does - the page
+  still works against a server too old to have the endpoint, or one that is
+  briefly down, rather than coming up blank.
 
-// How long after a well appears to keep saying "starting" rather than
-// "all clear" - the manager takes up to five seconds to notice a new well.
-const STARTING_MS = 8000;
+  settings.load() overwrites these at boot. They are read through the `S`
+  object rather than as bare constants so that the values a poll uses are the
+  ones in force now, not the ones that happened to be compiled in.
+*/
+const S = {
+    // Milliseconds between polls of /wells and /alerts.
+    pollMs: 5000,
 
-// How long an alert stays on its card. The server does the ageing, against the
-// same clock that stamped the alert.
-const ALERT_MAX_AGE_MIN = 30;
+    // How long after a well appears to keep saying "starting" rather than
+    // "all clear" - the manager takes a few seconds to notice a new well.
+    startingMs: 8000,
 
-// Most alerts a card will hold, newest kept. A backstop for a well raising
-// something new every second, not a window that is expected to be reached.
-const ALERT_LIMIT = 1000;
+    // How long an alert stays on its card. The server does the ageing, against
+    // the same clock that stamped the alert.
+    alertMaxAgeMin: 30,
 
-// Resize limits. Height is in pixels of alert list; width is in grid columns.
-const MIN_LIST_H = 90;
-const MAX_LIST_H = 900;
-const MAX_SPAN = 4;
+    // Most alerts a card will hold, newest kept. A backstop for a well raising
+    // something new every second, not a window expected to be reached.
+    alertLimit: 1000,
+
+    // Resize limits. Height is in pixels of alert list; width is grid columns.
+    minListH: 90,
+    maxListH: 900,
+    maxSpan: 4,
+};
+
+/*
+  Ask the server what it was configured with.
+
+  Failure is not fatal and is not shown to anyone: the fallbacks above are
+  sensible, and a dashboard that refuses to start because it could not read a
+  poll interval would be worse than one running five seconds off.
+*/
+async function loadSettings() {
+    try {
+        const s = await api('/settings');
+
+        S.pollMs = s.poll_seconds * 1000;
+        S.startingMs = s.starting_seconds * 1000;
+        S.alertMaxAgeMin = s.alert_max_age_minutes;
+        S.alertLimit = s.alert_limit;
+        S.minListH = s.card_min_height;
+        S.maxListH = s.card_max_height;
+        S.maxSpan = s.card_max_columns;
+    } catch (err) {
+        console.warn('Using built-in defaults; GET /settings failed:', err.message);
+    }
+}
 
 // Where per-card sizes are remembered between visits.
 const SIZE_KEY = 'dataqc.card-sizes';
@@ -325,15 +362,15 @@ function initResize(card, name) {
                     size.span = clamp(
                         Math.round((width + metrics.gap) / (metrics.track + metrics.gap)),
                         1,
-                        Math.min(MAX_SPAN, metrics.columns),
+                        Math.min(S.maxSpan, metrics.columns),
                     );
                 }
 
                 if (dir === 's' || dir === 'se') {
                     size.height = clamp(
                         startH + (move.clientY - startY),
-                        MIN_LIST_H,
-                        MAX_LIST_H,
+                        S.minListH,
+                        S.maxListH,
                     );
                 }
 
@@ -508,9 +545,9 @@ function updateCard(card, state, alerts) {
         return;
     }
 
-    // Nothing in the last ALERT_MAX_AGE_MIN minutes. Either the agent has not
+    // Nothing in the last alertMaxAgeMin minutes. Either the agent has not
     // connected yet, or all is well.
-    const starting = Date.now() - state.firstSeen < STARTING_MS;
+    const starting = Date.now() - state.firstSeen < S.startingMs;
 
     card.dataset.tone = 'ok';
     card.dataset.blank = '1';
@@ -574,8 +611,8 @@ async function refresh() {
         names.map((name) =>
             api(
                 '/alerts/' + encodeURIComponent(name)
-                + '?limit=' + ALERT_LIMIT
-                + '&max_age_minutes=' + ALERT_MAX_AGE_MIN,
+                + '?limit=' + S.alertLimit
+                + '&max_age_minutes=' + S.alertMaxAgeMin,
             )
                 .then((body) => listAlerts(body.alerts || []))
                 .catch(() => []),
@@ -620,7 +657,7 @@ function startPolling() {
     clearTimeout(polling);
 
     refresh().finally(() => {
-        polling = setTimeout(startPolling, POLL_MS);
+        polling = setTimeout(startPolling, S.pollMs);
     });
 }
 
@@ -629,8 +666,9 @@ function startPolling() {
 // The rule form
 //
 // Every value the agent checks a well against is entered here, and belongs to
-// that well alone. The four blocks are asked for in the order the data folder
-// lists them: activity, column mapping, conditions, ranges.
+// that well alone: the off-bottom margin that sorts a reading into DRILLING or
+// NON DRILLING, then the four blocks in the order the data folder lists them -
+// activity, column mapping, conditions, ranges.
 //
 // `draft` is the single source of truth while the dialog is open - the inputs
 // write into it as they are typed, and it is what gets posted. Reading the
@@ -644,6 +682,11 @@ let editing = null;      // the well being edited, or null when adding
 
 const copy = (value) => JSON.parse(JSON.stringify(value));
 
+// Only the placeholder in the off-bottom margin box: the value itself comes
+// from the template the API serves (rule_files.DEFAULT_DRILLING_CRITERIA), so
+// the two cannot drift apart in a way that changes what is saved.
+const DEFAULT_DRILLING_CRITERIA = 0.1;
+
 async function getTemplate() {
     if (template === null) {
         template = (await api('/rules/template')).rules;
@@ -652,13 +695,18 @@ async function getTemplate() {
     return copy(template);
 }
 
-/* A labelled input that writes straight into the draft. */
+/* A labelled input that writes straight into the draft. An empty label leaves
+   the caption off and gives just the box - for a field whose section heading
+   already says what it is. */
 function field(label, value, onInput, opts = {}) {
     const wrap = document.createElement('label');
     wrap.className = 'field' + (opts.compact ? ' field-compact' : '');
 
-    const name = document.createElement('span');
-    name.textContent = label;
+    if (label) {
+        const name = document.createElement('span');
+        name.textContent = label;
+        wrap.append(name);
+    }
 
     const input = document.createElement('input');
     input.type = opts.type || 'text';
@@ -668,13 +716,17 @@ function field(label, value, onInput, opts = {}) {
         input.placeholder = opts.placeholder;
     }
 
+    if (opts.title) {
+        input.title = opts.title;
+    }
+
     if (opts.type === 'number') {
         input.step = 'any';
     }
 
     input.addEventListener('input', () => onInput(input.value));
 
-    wrap.append(name, input);
+    wrap.append(input);
     return wrap;
 }
 
@@ -740,25 +792,44 @@ function renderActivity() {
     }
 }
 
-function renderDrillingCriteria() {
-    const host = document.getElementById(
-        'fields-drilling-criteria'
-    );
+/*
+  The one number that decides which set of activity rules a reading is checked
+  against: hole depth minus bit depth at or under it is DRILLING, over it is
+  NON DRILLING. It is this well's own, so a rig whose depth channels sit half
+  a metre apart on bottom can say so without moving every other well with it.
 
+  Just the box: the section heading above it already says what the number is
+  and what unit it is in, and a caption would only repeat it.
+
+  numberOrBlank, like every other figure in the form: an empty box stays empty
+  and a word stays a word, and the API answers with the sentence saying what
+  is wrong with it. Reading it as `Number(value) || 0` instead would quietly
+  turn both into 0 - a margin of nothing, which calls the rig NON DRILLING
+  from the moment the bit lifts by a millimetre.
+*/
+function renderDrillingCriteria() {
+    const host = document.getElementById('fields-drilling-criteria');
     host.replaceChildren();
 
-    host.append(
-        field(
-            'Drilling Criteria',
-            draft.drilling_criteria ?? 0.1,
-            (value) => {
-                draft.drilling_criteria = Number(value) || 0;
-            },
-            {
-                type: 'text'
-            }
-        )
-    );
+    // No min="0" on the box, though a negative margin is refused: a number
+    // input the browser judges invalid blocks submit with a bubble it cannot
+    // show while its section is collapsed, and the form would just stop
+    // responding. Every other figure here is checked by the API and answered
+    // in #modal-error, and this one is checked the same way.
+    host.append(field(
+        '',
+        draft.drilling_criteria,
+        (value) => {
+            draft.drilling_criteria = numberOrBlank(value);
+        },
+        {
+            compact: true,
+            type: 'number',
+            placeholder: String(DEFAULT_DRILLING_CRITERIA),
+            title: 'Hole depth − bit depth at or under this is DRILLING, '
+                + 'over it is NON DRILLING',
+        },
+    ));
 }
 
 /*
@@ -893,6 +964,11 @@ function renderConditions() {
 
 // ---- ranges --------------------------------------------------------------
 
+/* What the limits for a parameter are written in, for the tooltips. */
+function unitOf(param) {
+    return (draft.ranges[param] || {}).unit || 'the limit unit';
+}
+
 function renderRanges() {
     const host = document.getElementById('fields-ranges');
     host.replaceChildren();
@@ -927,8 +1003,10 @@ function renderRanges() {
             }
         }, { title: 'Shown in the alert text' }));
 
-        // Multiplies the stored reading before it is compared, so the limits
-        // can be written in the unit you think in. Blank compares as stored.
+        // Converts the stored reading before it is compared, so the limits can
+        // be written in the unit you think in. It multiplies, except for ROP,
+        // where the column is minutes per metre and the limits are m/hr, so it
+        // divides: 60 / 0.5 = 120 m/hr. Blank compares as stored.
         line.append(cell(limits.factor, (v) => {
             const value = numberOrBlank(v);
 
@@ -937,7 +1015,13 @@ function renderRanges() {
             } else {
                 limits.factor = value;
             }
-        }, { type: 'number', title: 'Multiplies the reading before comparing' }));
+        }, {
+            type: 'number',
+            title: param.toUpperCase() === 'ROP'
+                ? 'Divides: the column is minutes per metre, the limits are '
+                    + unitOf(param) + ' - 60 / 0.5 = 120'
+                : 'Multiplies the reading before comparing',
+        }));
     }
 
     host.append(wrapScroll(grid));
@@ -953,8 +1037,8 @@ function wrapScroll(grid) {
 }
 
 function renderRules() {
-    renderActivity();
     renderDrillingCriteria();
+    renderActivity();
     renderMapping();
     renderConditions();
     renderRanges();
@@ -1151,7 +1235,7 @@ async function stopWell(name) {
         toast(err.message, 'error');
     }
 
-    startPolling();
+    loadSettings().then(startPolling);
 }
 
 el.form.addEventListener('submit', async (event) => {

@@ -6,5 +6,6 @@
     "SPP": "SPP",
     "TA": "TA",
     "ROT_TORQUE_AVG": "Torque",
-    "HOOKLOAD": "Hookload"
+    "HOOKLOAD": "Hookload",
+    "LEL": "LEL"
 }

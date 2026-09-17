@@ -21,6 +21,7 @@ nothing has to be restarted.
 """
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from enum import Enum
@@ -37,6 +38,7 @@ import rule_files
 import well_registry
 import well_rules
 from config import Config
+from validation_realtime import alert_raised_at
 from logger import setup_logging, get_logger
 from rule_files import RuleFileError
 
@@ -56,18 +58,31 @@ class WellRequest(BaseModel):
     rules: Optional[dict] = Field(
         None,
         description="The well's own activity, column_mapping, conditions and "
-                    "ranges blocks. Leave it out and the well starts from the "
-                    "template in data/ - GET /rules/template is what the "
-                    "dashboard's form is filled from.",
+                    "ranges blocks, plus drilling_criteria - the metres off "
+                    "bottom that still count as DRILLING for this rig. Leave "
+                    "it out and the well starts from the template in data/ - "
+                    "GET /rules/template is what the dashboard's form is "
+                    "filled from.",
     )
 
 class RuleFile(str, Enum):
-    """The four files, as a dropdown in the docs page."""
+    """
+    The files GET/PUT /rules/{name} will serve, as a dropdown in the docs page.
+
+    It has to name every key in rule_files.FILES. A file missing from here is
+    refused by the path validator before the handler is reached, with a 422
+    naming the ones that are allowed - which is what the dashboard sees as
+    "Request failed" when it opens the Display names tab.
+    """
 
     activity = "activity"
     conditions = "conditions"
     ranges = "ranges"
     column_mapping = "column_mapping"
+
+    # Not a template like the four above: one set of names shared by every
+    # well, which is why the dashboard edits it on its own tab.
+    display_name = "display_name"
 
 
 # ---------------------------------------------------------------------------
@@ -82,8 +97,11 @@ class RangeLimits(BaseModel):
     unit: Optional[str] = Field(None, description="Shown in the alert text", examples=["ppm"])
     factor: Optional[float] = Field(
         None,
-        description="Converts the stored value before comparing - ROP is stored as "
-                    "minutes per metre, so 60 turns it into metres per hour",
+        description="Converts the stored value before comparing. It multiplies - "
+                    "HOOKLOAD's 2.268 turns daN into klbf - except for ROP, where "
+                    "it divides, because the column holds minutes per metre and "
+                    "the limits are in metres per hour: 60 / 0.5 = 120 m/hr. Leave "
+                    "it out to compare the column exactly as stored.",
         examples=[None],
     )
 
@@ -228,11 +246,13 @@ def _guard(action):
 @app.get("/rules/template", summary="The rules a new well starts from")
 def rules_template():
     """
-    The four blocks in data/, as the dashboard's form is filled with.
+    The four blocks in data/ and the default drilling_criteria, as the
+    dashboard's form is filled with.
 
     They are a starting point, not the rules anything runs on: every well
     keeps its own copy from the moment it is added, and editing these files
-    afterwards changes nothing for a well already being monitored.
+    afterwards changes nothing for a well already being monitored - including
+    the criteria, which is a per-well number and not a file at all.
     """
     return _guard(lambda: {"blocks": rule_files.RULE_BLOCKS, "rules": well_rules.template()})
 
@@ -267,10 +287,16 @@ def add_well(well: WellRequest):
 
 @app.get("/wells", summary="Which wells are being monitored")
 def get_wells():
-    wells = well_registry.summaries()
+    """
+    Every well with the activity its agent last worked out.
 
-    for name, well in wells.items():
-        well["activity"] = "DRILLING"   # temporary test
+    The activity is whatever the well's own drilling_criteria made of the last
+    reading, or null while the rig cannot be reached - the dashboard shows
+    that as "connecting" rather than guessing at DRILLING.
+    """
+    # One snapshot, counted from itself: taking the count separately would let
+    # a well added between the two calls be counted but not listed.
+    wells = well_registry.summaries()
 
     return {"count": len(wells), "wells": wells}
 
@@ -293,15 +319,17 @@ def set_well_rules(
     database_name: str,
     rules: dict = Body(
         ...,
-        description="All four blocks. They are checked against each other "
-                    "before anything is written.",
+        description="All four blocks and drilling_criteria. They are checked "
+                    "against each other before anything is written.",
     ),
 ):
     """
     Replace a well's rules, leaving its address alone.
 
-    The agent notices within a second and carries on with the new thresholds,
-    keeping the baselines its change checks are measuring against.
+    The agent notices within a second and carries on with the new thresholds -
+    a new drilling_criteria included, so the next reading is sorted into
+    DRILLING or NON DRILLING by it - keeping the baselines its change checks
+    are measuring against.
     """
     record = well_registry.get(database_name)
 
@@ -544,10 +572,18 @@ def replace_rules(
 def get_well_alerts(
     database_name: str,
     limit: int = Query(
-        200,
+        None,
         ge=1,
-        le=5000,
-        description="How many of the most recent alerts to return",
+        description="How many of the most recent alerts to return. Defaults to "
+                    "ALERT_PAGE_DEFAULT and is capped at ALERT_PAGE_MAX (.env).",
+    ),
+    max_age_minutes: float = Query(
+        None,
+        gt=0,
+        description="Leave out only the alerts raised within this many minutes. "
+                    "The dashboard passes DASHBOARD_ALERT_MAX_AGE_MINUTES (.env), "
+                    "which is how alerts leave a card while staying in the file "
+                    "until ALERT_RETENTION_HOURS.",
     ),
 ):
     """
@@ -556,6 +592,10 @@ def get_well_alerts(
     A well that was only just added has no file yet - that is an empty list,
     not an error, because the agent takes a few seconds to start.
     """
+    if limit is None:
+        limit = Config.ALERT_PAGE_DEFAULT
+
+    limit = min(limit, Config.ALERT_PAGE_MAX)
     # The same relative path the agent writes to in WellAgent.save_alerts. Both
     # run in this process, so they resolve against the same directory; keeping
     # the two spellings identical is what stops them drifting apart.
@@ -582,10 +622,49 @@ def get_well_alerts(
             detail=f"The alert file for '{database_name}' is not a list",
         )
 
+    if max_age_minutes is not None:
+        # Filtered here rather than in the page: the agent stamps every alert
+        # with the clock this process reads back, so the two always agree about
+        # what "30 minutes ago" means. The dashboard used to send this and the
+        # endpoint had no such parameter, so it was quietly dropped and nothing
+        # aged off a card at all.
+        cutoff = datetime.now() - timedelta(minutes=max_age_minutes)
+
+        alerts = [
+            alert for alert in alerts
+            if (raised := alert_raised_at(alert)) is not None and raised >= cutoff
+        ]
+
+    returned = alerts[-limit:]
+
     return {
         "database_name": database_name,
-        "count": len(alerts),
-        "alerts": alerts[-limit:],
+        # What came back, and what matched before `limit` trimmed it - "count:
+        # 1370, alerts: [3 of them]" reads as a bug in the caller otherwise.
+        "count": len(returned),
+        "total": len(alerts),
+        "alerts": returned,
+    }
+
+
+@app.get("/settings", summary="The dashboard's settings, from .env")
+def dashboard_settings():
+    """
+    The timings and limits the page runs on.
+
+    frontend/ is static and cannot read .env, so it asks for these once when it
+    loads and falls back to its own defaults if this call fails. That is what
+    makes .env the only place any of them is set - change one here, reload the
+    page, and nothing in app.js has to be edited.
+    """
+    return {
+        "poll_seconds": Config.DASHBOARD_POLL_SECONDS,
+        "starting_seconds": Config.DASHBOARD_STARTING_SECONDS,
+        "alert_max_age_minutes": Config.DASHBOARD_ALERT_MAX_AGE_MINUTES,
+        "alert_limit": min(Config.DASHBOARD_ALERT_LIMIT, Config.ALERT_PAGE_MAX),
+        "card_min_height": Config.DASHBOARD_CARD_MIN_HEIGHT,
+        "card_max_height": Config.DASHBOARD_CARD_MAX_HEIGHT,
+        "card_max_columns": Config.DASHBOARD_CARD_MAX_COLUMNS,
     }
 
 

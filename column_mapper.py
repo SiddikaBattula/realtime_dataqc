@@ -42,11 +42,25 @@ def to_number(value):
 
 
 class ColumnMapper:
-    def __init__(self, mapping, critical=None):
+    def __init__(self, mapping, critical=None, derived=None, optional=None):
         self.mapping = mapping
         self.critical = set(critical or [])
+
+        # Logical names that are worked out from other columns rather than read
+        # from one of their own - SPM, which is the pumps added up. A table with
+        # no column of that name is normal, so it is not reported as missing.
+        self.derived = set(derived or [])
+
+        # Logical names that are read from a column when there is one, but whose
+        # absence is expected rather than a mistake - MP5_SPM on a four-pump
+        # rig. Still counted as missing, because they are; just not warned
+        # about, because "add the correct column name" is no use when the rig
+        # has no fifth pump to name.
+        self.optional = set(optional or [])
+
         self.resolved = {}       # logical -> actual column name in the table
         self.missing = []        # logical names with no matching column
+        self.derived_only = []   # derived names with no column, which is fine
         self.unmapped = []       # table columns not referenced by the mapping
         self._resolved_once = False
 
@@ -54,7 +68,8 @@ class ColumnMapper:
     # Loading
     # ------------------------------------------------------------------
     @classmethod
-    def from_mapping(cls, mapping, critical=None, source="the well's rules"):
+    def from_mapping(cls, mapping, critical=None, source="the well's rules",
+                     derived=None, optional=None):
         """
         A mapper from a mapping already in memory.
 
@@ -76,7 +91,7 @@ class ColumnMapper:
                 )
 
         log.info("Column mapping from %s (%d logical columns)", source, len(mapping))
-        return cls(mapping, critical)
+        return cls(mapping, critical, derived, optional)
 
     @classmethod
     def from_file(cls, path, critical=None):
@@ -106,6 +121,7 @@ class ColumnMapper:
 
         self.resolved.clear()
         self.missing.clear()
+        self.derived_only.clear()
 
         for logical, aliases in self.mapping.items():
             match = None
@@ -118,17 +134,37 @@ class ColumnMapper:
             if match:
                 self.resolved[logical] = match
                 log.debug("Mapped %-16s -> %s", logical, match)
-            else:
-                self.missing.append(logical)
-                message = (
-                    "Column mapping missing for '%s'. None of %s exist in the table. "
-                    "Add the correct column name to column_mapping.json."
+                continue
+
+            if logical in self.derived:
+                # Not missing - this one was never going to come from a column.
+                # Whether it can actually be worked out is for the caller to
+                # check, since only the caller knows what it is worked out from.
+                self.derived_only.append(logical)
+                log.debug(
+                    "'%s' has no column of its own (none of %s) - it is worked "
+                    "out from other columns", logical, aliases,
                 )
-                if logical in self.critical:
-                    log.error(message, logical, aliases)
-                else:
-                    log.warning(message + " Checks using it will be skipped.",
-                                logical, aliases)
+                continue
+
+            self.missing.append(logical)
+
+            if logical in self.optional:
+                log.info(
+                    "'%s' has no column in this table, which is normal - it is "
+                    "simply left out", logical,
+                )
+                continue
+
+            message = (
+                "Column mapping missing for '%s'. None of %s exist in the table. "
+                "Add the correct column name to column_mapping.json."
+            )
+            if logical in self.critical:
+                log.error(message, logical, aliases)
+            else:
+                log.warning(message + " Checks using it will be skipped.",
+                            logical, aliases)
 
         used = {c.lower() for c in self.resolved.values()}
         self.unmapped = sorted(c for c in lookup.values() if c.lower() not in used)

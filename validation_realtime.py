@@ -7,46 +7,45 @@ so it cannot be shared between wells - build one per agent.
 
 Seven checks run on every reading, in this order:
 
-  1. activity      DRILLING or NON DRILLING, from hole depth minus bit depth, then
-                   every parameter activity.json marks 1 must be above 0
-  2. ranges        each parameter inside its min/max from ranges.json,
-                   after `factor` converts it into the limits' unit
+  1. activity      DRILLING or NON DRILLING, from hole depth minus bit depth
+                   against this well's drilling_criteria, then every parameter
+                   its activity block marks 1 must be above 0
+  2. ranges        each parameter inside its min/max from its ranges block,
+                   after `factor` converts the reading into the limits' unit -
+                   multiplying, or dividing for ROP (see INVERSE_PARAMS)
   3. TA > TG       alert once TA has been above TG for TA_TG.duration_seconds
   4. SPP           percentage move over SPP.duration_seconds, either direction
   5. SPM           the same, for total pump strokes per minute
   6. ROP           the same, but an increase only - a drop to zero is normal
-                   whenever the bit comes off bottom
+                   whenever the bit comes off bottom. Measured on the reading
+                   after `factor`, so a rise means the bit is drilling faster
+                   and not that the raw minutes-per-metre column went up
   7. HOOKLOAD      alert when the value has not moved at all for
                    HOOKLOAD.duration_seconds, which means a stalled feed
 
-Rules come from data/*.json and are re-read when those files change, without
-a restart. Parameters are referred to by logical name throughout (SPP, ROP,
-HOOKLOAD ...); ColumnMapper is what turns those into this table's columns.
+Rules come from the well's own file in data/wells/ and are re-read when it
+changes, without a restart - so two rigs can disagree about their column
+names, their limits and how far off bottom still counts as drilling.
+Parameters are referred to by logical name throughout (SPP, ROP, HOOKLOAD
+...); ColumnMapper is what turns those into this table's columns.
 """
 
-from importlib import resources
-from email import message
-from fastapi import staticfiles
-from importlib import resources
-from fastapi import param_functions
-from config import Config
 import re
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-import well_rules
-from logger import get_logger
 import rule_files
+import well_rules
+from alert_log import AlertLog
 from column_mapper import ColumnMapper, to_number
+from config import Config
+from logger import get_logger
 from rule_files import DRILLING, NON_DRILLING, RuleFileError
 
 
 log = get_logger(__name__)
-alert_log = get_logger("qc.alerts")
-
-# How often a set of alerts that has not changed is written out again.
-LOG_REPEAT_SECONDS = 60
 
 # The timestamp every alert starts with, "[17-09-26 05-32-43]". The alerts
 # endpoint and the agent read it back to tell how old an alert is.
@@ -60,9 +59,45 @@ _ALERT_STAMP = re.compile(r"^\[([^\]]*)\]")
 # when it looks and finds nothing.
 EVENT_SUBJECTS = {"SPP_CHANGE", "SPM_CHANGE", "ROP_CHANGE", "HOOKLOAD_STUCK"}
 
-_TIMESTAMP_PREFIX = re.compile(r"^\[[^\]]*\]\s*")
-_NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?")
+# Parameters whose column holds the reciprocal of the unit their limits are
+# written in, so `factor` divides the reading instead of multiplying it.
+#
+# ROP is the only one: the rig stores minutes per metre and ranges is written
+# in metres per hour, and 60 / 0.5 min/m = 120 m/hr. Every other parameter is
+# a straight multiply - HOOKLOAD's 2.268 turns daN into klbf.
+INVERSE_PARAMS = {"ROP"}
 
+# The pump columns SPM is totalled from. A rig with three pumps simply has no
+# column for the other two, and they are skipped.
+PUMPS = ("MP1_SPM", "MP2_SPM", "MP3_SPM", "MP4_SPM", "MP5_SPM")
+
+# Logical names that are worked out from other columns instead of being read
+# from one of their own.
+#
+# SPM is the only one: wherever it is checked - the range check and the
+# activity zero-check both - the value used is PUMPS added up, never whatever
+# a column called SPM holds. So a rig whose table has no SPM column (this one
+# calls its own total TOT_SPM) is checked perfectly well, and "no such column
+# exists, check skipped" is wrong about it twice over. What actually matters is
+# whether the pumps resolved, which is what _audit_config asks instead.
+DERIVED_PARAMS = {"SPM"}
+
+# Absent columns that are not a mistake. A four-pump rig has no MP5_SPM, and
+# _get_total_spm adds up whichever pumps are there - so telling the reader to
+# go and put the right column name in is advice about a pump that does not
+# exist.
+OPTIONAL_PARAMS = set(PUMPS)
+
+# Logical names that are worked out from other columns instead of being read
+# from one of their own.
+#
+# SPM is the only one: wherever it is checked - the range check and the
+# activity zero-check both - the value used is PUMPS added up, not whatever a
+# column called SPM holds. So a rig whose table has no SPM column (this one
+# calls its total TOT_SPM) is perfectly well checked, and saying "no such
+# column exists, check skipped" about it is wrong twice over. What actually
+# matters is whether the pumps resolved, which is what _audit_config asks.
+DERIVED_PARAMS = {"SPM"}
 
 def _stamp(path):
     """
@@ -93,16 +128,15 @@ def alert_raised_at(alert):
         return None
 
 
-def _alert_fingerprint(alert):
-    return _NUMBER.sub(
-        "#",
-        _TIMESTAMP_PREFIX.sub("", alert)
-    )
-
-
 @dataclass
 class ValidationResult:
     alerts: list = field(default_factory=list)
+
+    # Everything wrong on this reading, repeats included. `alerts` is only what
+    # was new, so a well with a standing problem reports 0 new alerts a second
+    # later - which reads as "nothing wrong" unless this is there too.
+    standing: int = 0
+
     spp_percentage: float = 0.0
     totalspm_percentage: float = 0.0
     rop_percentage: float = 0.0
@@ -112,11 +146,27 @@ class ValidationResult:
 
 class RealtimeValidator:
     def __init__(self, mapper, ranges, activity_rules, conditions, drilling_criteria,
-                 rules_path=None):
+                 rules_path=None, well=None):
+        # One process runs an agent per well and they all write to the same
+        # files, so the well's name goes in the logger rather than being left
+        # for each message to remember: every line is then attributable, and
+        # `grep "qc.alerts.KJ-16" logs/app.log` is one well's whole story.
+        self.well = well or "unknown-well"
+        self.log = get_logger(f"validation.{self.well}")
+
+        # Everything about what the log says, and why, lives in alert_log.py -
+        # this class is the drilling rules. refresh() below hands it the rules
+        # in force so its sentences quote the limits that are actually running.
+        self.alert_log = AlertLog(self.well)
+
         self.mapper = mapper
         self.ranges = ranges
         self.activity_rules = activity_rules
         self.conditions = conditions
+
+        # Metres of hole depth minus bit depth that still count as on bottom.
+        # This well's own - build_validator reads it out of its rules, and
+        # reload_rules_if_changed picks up an edit to it within a reading.
         self.drilling_criteria = drilling_criteria
 
         # subject -> what its last saved alert said (see raise_alert in
@@ -147,14 +197,15 @@ class RealtimeValidator:
         self.previous_hookload_time = None
 
 
-        # ---- what was last written to the log, and when ----
-        self._last_fingerprint = None
-        self._unchanged_since = None
-        self._last_logged = None
+        # What the last reading was called, so a change of activity is logged
+        # once rather than every second. What was last written to the alert log
+        # is the alert log's own business - see AlertLog.
         self._last_activity = None
 
         # What the well's rule file looked like when it was last read in.
         self._rule_stamp = _stamp(self.rules_path)
+
+        self._refresh_alert_log()
 
         self._audit_config()
 
@@ -214,28 +265,31 @@ class RealtimeValidator:
         try:
             rules = well_rules.load_rules(self.rules_path)
 
-            mapper = ColumnMapper.from_mapping(rules["column_mapping"])
+            mapper = ColumnMapper.from_mapping(
+                rules["column_mapping"],
+                derived=DERIVED_PARAMS,
+                optional=OPTIONAL_PARAMS,
+            )
             mapper.resolve(list(row.keys()))
 
             self.mapper = mapper
             self.ranges = rules["ranges"]
             self.activity_rules = rules["activity"]
             self.conditions = rules["conditions"]
-            self.drilling_criteria = float(
-                rules.get("drilling_criteria", 0.1)
-            )
+            self.drilling_criteria = rule_files.drilling_criteria_of(rules)
 
             self._apply_conditions()
+            self._refresh_alert_log()
 
         except Exception as exc:
-            log.error(
+            self.log.error(
                 "%s changed but could not be loaded (%s) - carrying on with "
                 "the rules already in memory",
                 Path(self.rules_path).name, exc,
             )
             return False
 
-        log.info("Reloaded rules from %s", Path(self.rules_path).name)
+        self.log.info("Reloaded rules from %s", Path(self.rules_path).name)
 
         self._audit_config()
 
@@ -261,14 +315,14 @@ class RealtimeValidator:
             names = rule_files.load("display_name")
 
         except RuleFileError as exc:
-            log.error(
+            self.log.error(
                 "display_name.json could not be loaded (%s) - alerts keep the "
                 "names already in memory", exc,
             )
             return
 
         if not isinstance(names, dict):
-            log.error(
+            self.log.error(
                 "display_name.json must map parameters to names - alerts keep "
                 "the names already in memory"
             )
@@ -282,7 +336,7 @@ class RealtimeValidator:
             if isinstance(name, str) and name.strip()
         }
 
-        log.info("Display names loaded: %d", len(self.display_names))
+        self.log.info("Display names loaded: %d", len(self.display_names))
 
     # ------------------------------------------------------------------
     # Startup sanity: every param used in the rule files must be mappable
@@ -293,38 +347,89 @@ class RealtimeValidator:
 
         def check(param, source):
             nonlocal problems
+
             if param not in known:
-                log.error(
-                    "%s refers to '%s' which has no entry in column_mapping.json - "
+                self.log.error(
+                    "%s refers to '%s' which has no entry in column_mapping - "
                     "this check can never run", source, param,
                 )
                 problems += 1
-            elif not self.mapper.is_available(param):
-                log.warning(
+                return
+
+            if param in DERIVED_PARAMS:
+                # Worked out, not read. The table having no column of this name
+                # is normal; what would break the check is having nothing left
+                # to work it out from.
+                if not self.derived_from(param):
+                    self.log.error(
+                        "%s refers to '%s', which is worked out from %s - none of "
+                        "those columns exist in the table either, so it is 0 on "
+                        "every reading", source, param, ", ".join(PUMPS),
+                    )
+                    problems += 1
+
+                return
+
+            if not self.mapper.is_available(param):
+                self.log.warning(
                     "%s refers to '%s' but no such column exists in the table - "
                     "check skipped", source, param,
                 )
 
         for param in self.ranges:
-            check(param, "ranges.json")
+            check(param, "ranges")
 
         for activity, rules in self.activity_rules.items():
             for param in rules:
-                check(param, f"activity.json[{activity}]")
+                check(param, f"activity[{activity}]")
+
+        # Said once, not per rule that mentions it: three identical lines about
+        # SPM were most of what this audit used to print.
+        for param in sorted(DERIVED_PARAMS):
+            columns = self.derived_from(param)
+
+            if param in known and columns:
+                self.log.info(
+                    "%s is not read from a column of its own - it is %s added up",
+                    param, " + ".join(columns),
+                )
 
         if problems:
-            log.error("%d rule parameter(s) are not defined in column_mapping.json", problems)
+            self.log.error(
+                "%d rule parameter(s) cannot be checked against this table", problems
+            )
         else:
-            log.info("Rule files audited: all parameters are present in column_mapping.json")
+            self.log.info("Rules audited: every parameter can be checked")
+
+    def derived_from(self, param):
+        """
+        The columns `param` is worked out from, of the ones this table has.
+
+        Empty means it cannot be worked out at all. A four-pump rig returns
+        four of the five, which is not a problem - _get_total_spm adds up
+        whatever is there.
+        """
+        if param == "SPM":
+            return [pump for pump in PUMPS if self.mapper.is_available(pump)]
+
+        return []
 
     # ------------------------------------------------------------------
     def _apply_factor(self, param, value, factor):
         """
         The reading converted into the unit its limits are written in.
 
-        `factor` in ranges.json is a multiplier: the stored value is multiplied
-        by it before being compared, and the converted number is what the alert
-        quotes. Leave it out and the column is compared as it is stored.
+        `factor` is the number entered against the parameter in the form. For
+        almost everything it multiplies: HOOKLOAD's 2.268 turns the stored daN
+        into the klbf its limits are written in. For a parameter in
+        INVERSE_PARAMS it divides instead, because the column holds the
+        reciprocal unit - ROP's 60 turns 0.5 minutes per metre into 120 metres
+        per hour. Leave the factor out and the column is compared as stored,
+        ROP included.
+
+        Returns None when the reading cannot be converted at all - a ROP of 0
+        is the bit not advancing, and 60/0 is not a speed. The caller skips the
+        check rather than comparing a number that means nothing.
 
         A factor that is not a usable number is reported and ignored rather
         than allowed to skip the check.
@@ -335,20 +440,45 @@ class RealtimeValidator:
         multiplier = to_number(factor)
 
         if multiplier is None or multiplier == 0:
-            log.error(
-                "ranges.json: '%s' has factor %r, which is not a usable "
-                "multiplier - comparing the raw value instead",
+            self.log.error(
+                "ranges: '%s' has factor %r, which is not a usable number - "
+                "comparing the raw value instead",
                 param, factor,
             )
             return value
 
+        if param.upper() in INVERSE_PARAMS:
+            if value == 0:
+                return None
+
+            return round(multiplier / value, 4)
+
         return round(value * multiplier, 4)
 
+    def _in_limit_unit(self, param, value):
+        """
+        `value` in the unit this well's limits for `param` are written in.
+
+        The one place a reading is converted, so the range check and the
+        percentage-change checks cannot end up comparing different units - see
+        the ROP change check, which was reading the raw column while the range
+        check beside it read m/hr.
+        """
+        if value is None:
+            return None
+
+        return self._apply_factor(
+            param, value, self.ranges.get(param, {}).get("factor")
+        )
+
+    def _refresh_alert_log(self):
+        """Tell the log which rules are in force, at build and at every reload."""
+        self.alert_log.refresh(self.mapper, self.ranges, self.drilling_criteria)
 
     def _get_total_spm(self, normalized_data):
         total_spm = 0
 
-        for pump in ["MP1_SPM", "MP2_SPM", "MP3_SPM", "MP4_SPM", "MP5_SPM"]:
+        for pump in PUMPS:
             value = normalized_data.get(pump)
 
             if value is not None:
@@ -359,7 +489,15 @@ class RealtimeValidator:
 
     # ------------------------------------------------------------------
     def detect_activity(self, data, raise_alert, date_str):
+        """
+        What the rig is doing, from how far the bit is off bottom.
 
+        The margin is this well's own drilling_criteria, not a figure shared
+        by every rig: one rig's depth channels agree to the centimetre and
+        another's are half a metre apart while still on bottom, and reading
+        the second one against the first's margin would call every reading
+        NON DRILLING and run the wrong set of activity checks all shift.
+        """
         total_depth = data.get("DEPTH")
         bit_depth = data.get("BIT_DPT_MD")
 
@@ -371,21 +509,26 @@ class RealtimeValidator:
                 "DEPTH", "BIT_DPT_MD",
                 subject="ACTIVITY_UNDETERMINED",
                 value=(total_depth is None, bit_depth is None),
+                why=(
+                    f"activity needs both depths: DEPTH={total_depth} "
+                    f"(column {self.mapper.column_for('DEPTH')}), "
+                    f"BIT_DPT_MD={bit_depth} "
+                    f"(column {self.mapper.column_for('BIT_DPT_MD')}) - "
+                    "one of them is missing or not a number in this row"
+                ),
             )
             return None
 
         gap = total_depth - bit_depth
 
-        activity = (
-            "DRILLING"
-            if gap <= self.drilling_criteria
-            else "NON DRILLING"
-        )
+        activity = DRILLING if gap <= self.drilling_criteria else NON_DRILLING
 
         if activity != self._last_activity:
-            log.debug(
-                "Activity %s (hole %s - bit %s = %.2f m)",
-                activity, total_depth, bit_depth, gap,
+            # The margin is logged with the gap: "why is this well DRILLING at
+            # 0.4 m off bottom" is answered by the two numbers together.
+            self.log.debug(
+                "Activity %s (hole %s - bit %s = %.2f m, criteria %g m)",
+                activity, total_depth, bit_depth, gap, self.drilling_criteria,
             )
             self._last_activity = activity
 
@@ -403,7 +546,7 @@ class RealtimeValidator:
 
         normalized_data, row_errors = self.mapper.normalize(row)
         for err in row_errors:
-            log.warning("Row normalisation: %s", err)
+            self.log.warning("Row normalisation: %s", err)
 
         # New alerts only - what gets saved and shown on the dashboard.
         alerts = []
@@ -413,10 +556,11 @@ class RealtimeValidator:
         # reports, so a problem that is still there is not logged as cleared.
         standing = []
         standing_sources = []
+        standing_reasons = []
 
         raised = set()
 
-        def raise_alert(message, *params, subject, value=None):
+        def raise_alert(message, *params, subject, value=None, why=None):
             """
             Record a problem, unless it repeats the last alert about the same thing.
 
@@ -425,10 +569,17 @@ class RealtimeValidator:
             message that matters, leaving out the timestamp and the bit depth.
             "ROP increased by 12%" at BD 2239 and again at BD 2240 is the same
             alert and is saved once; "ROP increased by 30%" is a new one.
+
+            `why` is the arithmetic behind it, in the units the check actually
+            compared: which reading, off which column, against which limit. It
+            is for the log only and never reaches the alert file - the alert
+            text is what the rig crew reads, this is what answers "why did that
+            fire?" at 3am without anyone having to re-derive it from the rules.
             """
             raised.add(subject)
             standing.append(message)
             standing_sources.append(params)
+            standing_reasons.append(why)
 
             if subject in self._last_alerted and self._last_alerted[subject] == value:
                 return
@@ -458,8 +609,13 @@ class RealtimeValidator:
                     f"[{date_str}] Unknown activity: {activity}",
                     subject="ACTIVITY_UNKNOWN",
                     value=activity,
+                    why=(
+                        f"the rig is {activity} but this well's activity rules "
+                        f"only cover {', '.join(self.activity_rules) or 'nothing'} - "
+                        "no zero-checks could be run for this reading"
+                    ),
                 )
-                log.error("activity.json has no rule block for '%s'", activity)
+                self.log.error("activity.json has no rule block for '%s'", activity)
 
             else:
                for param, is_mandatory in rules.items():
@@ -477,6 +633,11 @@ class RealtimeValidator:
                                 "SPM",
                                 subject="ZERO:SPM",
                                 value=activity,
+                                why=(
+                                    f"activity[{activity}] requires SPM above 0; "
+                                    f"pumps total {value} "
+                                    f"({self.alert_log.pump_breakdown(normalized_data, PUMPS)})"
+                                ),
                             )
 
                         continue
@@ -492,6 +653,7 @@ class RealtimeValidator:
                             param,
                             subject=f"ZERO:{param}",
                             value=activity,
+                            why=self.alert_log.zero_reason(param, activity, value),
                         )
                                             
 
@@ -519,7 +681,7 @@ class RealtimeValidator:
             max_val = to_number(limits.get("max"))
 
             if min_val is None or max_val is None:
-                log.error(
+                self.log.error(
                     "ranges.json: '%s' has a min/max that is not a number "
                     "(%r / %r) - range check skipped",
                     param, limits.get("min"), limits.get("max"),
@@ -533,31 +695,31 @@ class RealtimeValidator:
 
             unit = limits.get("unit", "")
 
-            # `factor` converts the stored reading into the unit the limits are
-            # written in, before either is compared. ROP is the reason it
-            # exists: the table stores it in one unit and ranges.json is in
-            # m/hr. Without this the limits were being applied to the raw
-            # column, which is the unit they were never written for.
-            if param.upper() == "ROP":
-                try:
-                    if value != 0:
-                        value = 60 / float(value)
-                    else:
-                        log.warning("ROP is 0, skipping 60/ROP conversion")
-                        continue
-                except Exception as e:
-                    log.error(f"Failed to convert ROP value {value}: {e}")
-                    continue
-            else:
-                value = self._apply_factor(param, value, limits.get("factor"))
-       
-            
+            # `factor` converts the stored reading into the unit the limits
+            # are written in, before either is compared. ROP is the reason it
+            # exists: the table stores it in minutes per metre and the limits
+            # are in m/hr. Without this the limits were being applied to the
+            # raw column, which is the unit they were never written for.
+            raw = value
+            value = self._in_limit_unit(param, value)
+
+            if value is None:
+                # ROP at 0: the bit is not advancing, which is normal on every
+                # connection and trip. There is no speed to range-check, so
+                # this reading says nothing about the parameter either way.
+                self.log.debug("%s is 0 - nothing to convert, range check skipped", param)
+                continue
+
             if value < min_val:
                 raise_alert(
                     f"[{date_str}] {self.display_name(param)} : {value:.2f}{unit} below limit {min_text}{unit} BD : {bit_depth}{depth_unit} ",
                     param,
                     subject=f"RANGE:{param}",
                     value=f"below {value:.2f}",
+                    why=self.alert_log.range_reason(
+                    param, raw, value, limits, "below", min_text,
+                    inverse=param.upper() in INVERSE_PARAMS,
+                ),
                 )
 
             elif value > max_val:
@@ -566,6 +728,10 @@ class RealtimeValidator:
                     param,
                     subject=f"RANGE:{param}",
                     value=f"above {value:.2f}",
+                    why=self.alert_log.range_reason(
+                    param, raw, value, limits, "above", max_text,
+                    inverse=param.upper() in INVERSE_PARAMS,
+                ),
                 )
 
         # ------------------------------------------------------------------
@@ -578,7 +744,7 @@ class RealtimeValidator:
             if ta > tg:
                 if self.ta_gt_tg_start is None:
                     self.ta_gt_tg_start = datetime.now()
-                    log.debug("TA>TG started (TA=%s TG=%s)", ta, tg)
+                    self.log.debug("TA>TG started (TA=%s TG=%s)", ta, tg)
 
                 elapsed = (datetime.now() - self.ta_gt_tg_start).total_seconds()
 
@@ -589,11 +755,15 @@ class RealtimeValidator:
                         "TA",
                         "TG",
                         subject="TA_TG",
+                        why=(
+                            f"TA={ta} has been above TG={tg} for {elapsed:.0f}s, "
+                            f"past conditions[TA_TG] of {self.ta_tg_duration}s"
+                        ),
                     )
             else:
                 # Reset timer when condition clears
                 if self.ta_gt_tg_start is not None:
-                    log.debug("TA>TG cleared")
+                    self.log.debug("TA>TG cleared")
                 self.ta_gt_tg_start = None
 
         # ------------------------------------------------------------------
@@ -621,7 +791,7 @@ class RealtimeValidator:
 
                     percent_change = ((spp - self.previous_spp) / self.previous_spp) * 100
 
-                    log.debug("SPP %s -> %s over %.1fs = %.2f%%",
+                    self.log.debug("SPP %s -> %s over %.1fs = %.2f%%",
                               self.previous_spp, spp, elapsed, percent_change)
 
                     if percent_change > self.spp_threshold:
@@ -630,6 +800,11 @@ class RealtimeValidator:
                             "SPP",
                             subject="SPP_CHANGE",
                             value=f"increased {percent_change:.2f}",
+                            why=self.alert_log.change_reason(
+                                "SPP", self.previous_spp, spp, elapsed,
+                                percent_change, self.spp_threshold,
+                                self.spp_duration,
+                            ),
                         )
 
                     elif percent_change < -self.spp_threshold:
@@ -638,6 +813,11 @@ class RealtimeValidator:
                             "SPP",
                             subject="SPP_CHANGE",
                             value=f"dropped {abs(percent_change):.2f}",
+                            why=self.alert_log.change_reason(
+                                "SPP", self.previous_spp, spp, elapsed,
+                                percent_change, self.spp_threshold,
+                                self.spp_duration,
+                            ),
                         )
 
                     else:
@@ -678,7 +858,7 @@ class RealtimeValidator:
         #                 (totalspm - self.previous_totalspm) / self.previous_totalspm
         #             ) * 100
 
-        #             log.debug("TotalSPM %s -> %s over %.1fs = %.2f%%",
+        #             self.log.debug("TotalSPM %s -> %s over %.1fs = %.2f%%",
         #                       self.previous_totalspm, totalspm, elapsed, percent_change)
 
         #             if percent_change > self.totalspm_threshold:
@@ -701,9 +881,22 @@ class RealtimeValidator:
         # ------------------------------------------------------------------
         # 6. ROP change
         # ------------------------------------------------------------------
-        rop = normalized_data.get("ROP")
+        # In the same unit as the limits, not the raw column. Read raw, the
+        # check was backwards for a rig storing minutes per metre: a value
+        # going up means the rig is drilling SLOWER, so "ROP increased by
+        # 100%" was raised on a bit that had just halved its rate of
+        # penetration, and a bit that doubled it raised nothing at all.
+        rop_raw = normalized_data.get("ROP")
+        rop = self._in_limit_unit("ROP", rop_raw)
 
-        if rop is not None:
+        if rop_raw is not None and rop is None:
+            # Not advancing - a connection or a trip. Nothing to compare, and
+            # the baseline goes with it so the next spell of drilling is
+            # measured from where it starts rather than from before the trip.
+            self.previous_rop = None
+            self.previous_rop_time = None
+
+        elif rop is not None:
             current_time = datetime.now()
 
             # First value
@@ -725,7 +918,7 @@ class RealtimeValidator:
 
                     percent_change = ((rop - self.previous_rop) / self.previous_rop) * 100
 
-                    log.debug("ROP %s -> %s over %.1fs = %.2f%%",
+                    self.log.debug("ROP %s -> %s over %.1fs = %.2f%%",
                               self.previous_rop, rop, elapsed, percent_change)
 
                     if percent_change > self.rop_threshold:
@@ -734,6 +927,11 @@ class RealtimeValidator:
                             "ROP",
                             subject="ROP_CHANGE",
                             value=f"increased {percent_change:.2f}",
+                            why=self.alert_log.change_reason(
+                                "ROP", self.previous_rop, rop, elapsed,
+                                percent_change, self.rop_threshold,
+                                self.rop_duration, raw=rop_raw,
+                            ),
                         )
 
                     else:
@@ -772,6 +970,9 @@ class RealtimeValidator:
                         f"[{date_str}] Please check for data Trans. {self.display_name('HOOKLOAD')} has remained unchanged for {int(elapsed)} seconds",
                         "HOOKLOAD",
                         subject="HOOKLOAD_STUCK",
+                        why=self.alert_log.stuck_reason(
+                            "HOOKLOAD", hookload, elapsed, self.hookload_duration,
+                        ),
                     )
                     # Reset the timer so the alert does not fire every second
                     # for as long as the value stays stuck.
@@ -792,14 +993,17 @@ class RealtimeValidator:
             if subject not in raised and subject not in EVENT_SUBJECTS:
                 del self._last_alerted[subject]
 
-        self._log_reading(
+        self.alert_log.reading(
             activity, bit_depth, ta, tg,
             spp_percentage, totalspm_percentage, rop_percentage,
             standing, standing_sources,
+            reasons=standing_reasons,
+            normalized_data=normalized_data,
         )
 
         return ValidationResult(
             alerts=alerts,
+            standing=len(standing),
             spp_percentage=spp_percentage,
             totalspm_percentage=totalspm_percentage,
             rop_percentage=rop_percentage,
@@ -808,110 +1012,6 @@ class RealtimeValidator:
         )
 
 
-    # ------------------------------------------------------------------
-    # Logging
-    # ------------------------------------------------------------------
-    def _columns_note(self, params):
-        """
-        "TG = Total_Gas" for each logical name a check read.
-
-        The rules are written against logical names, so an alert about TG says
-        nothing about where to look in the table. This is the answer to "which
-        column is that?" without opening column_mapping.json.
-        """
-        named = []
-
-        for param in params:
-            column = self.mapper.column_for(param)
-            named.append(f"{param} = {column}" if column else f"{param} = not in table")
-
-        return ", ".join(named)
-
-    def _log_reading(self, activity, depth, ta, tg,
-                     spp_percentage, totalspm_percentage, rop_percentage,
-                     alerts, sources):
-        """
-        One record per reading, never one per alert - and not once a second.
-
-        Rows arrive about every second and mostly repeat what the last one
-        said, so the full block is written when what is wrong actually changes:
-        an alert appears, one clears, or the set of them is different. While
-        the same alerts stay up it is repeated as a single line every
-        LOG_REPEAT_SECONDS, so the log says the problem is still there without
-        burying everything else. Every reading is still logged in full at DEBUG.
-
-        `alerts` here is everything wrong on this reading, repeats included -
-        not only the new alerts that were saved - so a problem that is still
-        there is never logged as all clear.
-        """
-        now = datetime.now()
-
-        summary = (
-            f"{activity} | depth {depth} | TA {ta} TG {tg} | "
-            f"change SPP {spp_percentage}% SPM {totalspm_percentage}% "
-            f"ROP {rop_percentage}%"
-        )
-
-        alert_log.debug("%s | %d alert(s)", summary, len(alerts))
-
-        fingerprint = tuple(_alert_fingerprint(alert) for alert in alerts)
-
-        if fingerprint != self._last_fingerprint:
-
-            self._last_fingerprint = fingerprint
-            self._unchanged_since = now
-            self._last_logged = now
-
-            if not alerts:
-                alert_log.info("%s | all clear", summary)
-                return
-
-            lines = []
-
-            for number, alert in enumerate(alerts, 1):
-                # The alert text carries its own timestamp for the database
-                # row; this record already has one, so it comes off here.
-                message = _TIMESTAMP_PREFIX.sub("", alert)
-                note = self._columns_note(
-                    sources[number - 1] if number <= len(sources) else ()
-                )
-
-                lines.append(
-                    f"  {number}. {message}   [{note}]" if note
-                    else f"  {number}. {message}"
-                )
-
-            listed = "\n".join(lines)
-
-            alert_log.warning(
-                "\n"
-                f"Activity     : {activity}\n"
-                f"Depth        : {depth}\n"
-                f"TA           : {ta}\n"
-                f"TG           : {tg}\n"
-                f"SPP % change : {spp_percentage}\n"
-                f"SPM % change : {totalspm_percentage}\n"
-                f"ROP % change : {rop_percentage}\n"
-                f"Alerts ({len(alerts)})   :\n"
-                f"{listed}\n"
-            )
-            return
-
-        # Same as the last reading - say so occasionally, not every second.
-        if (now - self._last_logged).total_seconds() < LOG_REPEAT_SECONDS:
-            return
-
-        self._last_logged = now
-        held = int((now - self._unchanged_since).total_seconds())
-
-        if alerts:
-            alert_log.warning(
-                "%s | the same %d alert(s) have been up for %ds",
-                summary, len(alerts), held,
-            )
-        else:
-            alert_log.info("%s | still clear after %ds", summary, held)
-
     def reset_state(self):
         """Clear timers/baselines - use when the source table is switched."""
         self.ta_gt_tg_start = None
@@ -919,18 +1019,17 @@ class RealtimeValidator:
         self.previous_totalspm = self.previous_totalspm_time = None
         self.previous_rop = self.previous_rop_time = None
         self.previous_hookload = self.previous_hookload_time = None
-        self._last_fingerprint = None
-        self._unchanged_since = self._last_logged = None
         self._last_activity = None
         self._last_alerted.clear()
-        log.info("Validator state reset")
+        self.alert_log.reset()
+        self.log.info("Validator state reset")
 
 
 # ----------------------------------------------------------------------
 # Building one
 # ----------------------------------------------------------------------
 
-def build_validator(sample_row, rules, rules_path=None):
+def build_validator(sample_row, rules, rules_path=None, well=None):
     """
     A validator for one well, from that well's own rules.
 
@@ -942,8 +1041,15 @@ def build_validator(sample_row, rules, rules_path=None):
     `rules_path` is the file those rules came from. Given one, the validator
     re-reads it whenever it changes, so an edit in the dashboard takes effect
     without restarting the agent.
+
+    `well` is the database name, and is what every line this validator logs is
+    filed under - without it a shared log cannot say which rig raised what.
     """
-    mapper = ColumnMapper.from_mapping(rules["column_mapping"])
+    mapper = ColumnMapper.from_mapping(
+        rules["column_mapping"],
+        derived=DERIVED_PARAMS,
+        optional=OPTIONAL_PARAMS,
+    )
     mapper.resolve(list(sample_row.keys()))
 
     return RealtimeValidator(
@@ -951,8 +1057,7 @@ def build_validator(sample_row, rules, rules_path=None):
         ranges=rules["ranges"],
         activity_rules=rules["activity"],
         conditions=rules["conditions"],
-        drilling_criteria=float(
-            rules.get("drilling_criteria", 0.1)
-        ),
+        drilling_criteria=rule_files.drilling_criteria_of(rules),
         rules_path=rules_path,
+        well=well,
     )

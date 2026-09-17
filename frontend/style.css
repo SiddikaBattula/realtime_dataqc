@@ -993,6 +993,29 @@ body[data-resizing] {
     box-shadow: 0 0 0 3px rgba(124, 107, 255, .16);
 }
 
+/* A field holding one short number - the off-bottom margin. Left at the full
+   width of a .group-body grid cell it would be a box the width of the dialog
+   for four characters, which reads as though a lot more is expected. */
+.field-compact input {
+    width: 132px;
+}
+
+/* No up/down arrows. They are a click that moves the value by a whole step
+   when what is wanted is a margin of a few centimetres, and they crowd a box
+   this narrow. type="number" is kept for the numeric keypad on a phone and
+   for a browser that will not take letters in the first place. */
+.field-compact input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+.field-compact input[type="number"]::-webkit-outer-spin-button,
+.field-compact input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    appearance: none;
+    margin: 0;
+}
+
 .field-note {
     margin: -5px 0 0;
     font-size: 11px;

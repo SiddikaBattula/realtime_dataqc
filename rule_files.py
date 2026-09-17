@@ -15,6 +15,7 @@ it notices the file changed and reloads by itself.
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 
@@ -498,7 +499,8 @@ def save(name, document):
 # ---------------------------------------------------------------------------
 
 # The order the data folder lists them in, which is the order the form asks
-# for them in.
+# for them in. The first four are objects; drilling_criteria is a single
+# number, and is here because it is saved, checked and sent with the rest.
 RULE_BLOCKS = (
     "activity",
     "column_mapping",
@@ -506,6 +508,41 @@ RULE_BLOCKS = (
     "ranges",
     "drilling_criteria",
 )
+
+# Metres of hole depth minus bit depth that still count as on bottom. It used
+# to be one DRILLING_CRITERIA in .env for every rig; each well now carries its
+# own, because what counts as off bottom is a property of the rig's depth
+# sensors and not of the machine the agent runs on. This is only what a new
+# well's form opens with, and what a well saved before the change is read
+# under - see well_rules._read. Set it in .env as DEFAULT_DRILLING_CRITERIA.
+DEFAULT_DRILLING_CRITERIA = Config.DEFAULT_DRILLING_CRITERIA
+
+
+def drilling_criteria_of(rules):
+    """
+    One well's drilling criteria, as a number the validator can compare with.
+
+    Anything unusable - missing, null, left over from before the setting
+    existed - falls back to the default rather than raising: a well is better
+    checked against 0.1 m than not checked at all. save() is where a bad value
+    is refused, and it is refused there before it can ever be stored.
+    """
+    if not isinstance(rules, dict):
+        return DEFAULT_DRILLING_CRITERIA
+
+    try:
+        criteria = _as_number(
+            rules.get("drilling_criteria"), "drilling_criteria"
+        )
+
+    except RuleFileError:
+        return DEFAULT_DRILLING_CRITERIA
+
+    if not math.isfinite(criteria) or criteria < 0:
+        return DEFAULT_DRILLING_CRITERIA
+
+    return criteria
+
 
 # The two activities the validator tells apart: bit on bottom, and anything
 # else. The second used to be called RIH, and rules saved before the rename
@@ -568,25 +605,34 @@ def validate_set(rules):
     missing = [
         block
         for block in RULE_BLOCKS
-        if block not in rules
+        if rules.get(block) is None
     ]
 
     if missing:
         raise RuleFileError(
-            f"The rules are missing {', '.join(missing)}. All rule blocks are "
+            f"The rules are missing {', '.join(missing)}. All of these are "
             "required: " + ", ".join(RULE_BLOCKS)
         )
 
-    drilling_criteria = rules.get("drilling_criteria")
+    # Checked with the same _as_number as every other figure in the rules, so
+    # "0.1" typed into the form is read the way "60" in a factor already is,
+    # and true/false is refused rather than counted as 1.
+    criteria = _as_number(
+        rules["drilling_criteria"],
+        "drilling_criteria (the off-bottom margin, in metres)",
+    )
 
-    if not isinstance(drilling_criteria, (int, float)):
+    if not math.isfinite(criteria):
         raise RuleFileError(
-            "drilling_criteria must be a number"
+            "drilling_criteria (the off-bottom margin, in metres) must be an "
+            "ordinary number - Infinity and NaN cannot be compared against"
         )
 
-    if drilling_criteria < 0:
+    if criteria < 0:
         raise RuleFileError(
-            "drilling_criteria cannot be negative"
+            "drilling_criteria (the off-bottom margin, in metres) cannot be "
+            "negative - it is how far the bit may sit above bottom and still "
+            "count as DRILLING, so the smallest it goes is 0"
         )
 
     # The mapping first: it decides which parameter names the other three are
@@ -624,6 +670,18 @@ def tidy_set(rules):
 
     tidy["activity"] = rename_old_activities(tidy["activity"])
 
+    # "0.1" out of a text box is the number 0.1, and is stored as one - the
+    # validator compares it against a depth and never re-reads the file. A
+    # value that is not a number at all is left exactly as it came in, for
+    # validate_set to name properly.
+    if isinstance(tidy["drilling_criteria"], str):
+        try:
+            tidy["drilling_criteria"] = _tidy_numbers(
+                _as_number(tidy["drilling_criteria"], "drilling_criteria")
+            )
+        except RuleFileError:
+            pass
+
     if isinstance(tidy.get("column_mapping"), dict):
         tidy["column_mapping"] = _dedupe_aliases(tidy["column_mapping"])
 
@@ -636,7 +694,7 @@ def template():
         "column_mapping": load("column_mapping"),
         "conditions": load("conditions"),
         "ranges": load("ranges"),
-        "drilling_criteria": 0.1,
+        "drilling_criteria": DEFAULT_DRILLING_CRITERIA,
     }
 
     rules["activity"] = rename_old_activities(
