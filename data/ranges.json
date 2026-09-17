@@ -12,73 +12,87 @@
         "factor": 60
     },
     "HOOKLOAD": {
-        "min": 20,
-        "max": 300,
-        "unit": "kflb"
+        "min": 10,
+        "max": 200,
+        "unit": "kflb",
+        "factor": 2.268
     },
     "WOB": {
         "min": 0,
         "max": 30,
-        "unit": "kflb"
+        "unit": "kflb",
+        "factor": 2.268
     },
     "RPM": {
         "min": 0,
         "max": 200,
-        "unit": "rpm"
+        "unit": "rpm",
+        "factor": 1
     },
     "SPM": {
         "min": 0,
         "max": 400,
-        "unit": "spm"
+        "unit": "spm",
+        "factor": 1
     },
     "SPP": {
         "min": 0,
         "max": 4000,
-        "unit": "psi"
+        "unit": "psi",
+        "factor": 14.28
     },
     "TG": {
         "min": 0,
         "max": 10,
-        "unit": "%"
+        "unit": "%",
+        "factor": 1
     },
     "TA": {
         "min": 0,
         "max": 100,
-        "unit": "%"
+        "unit": "%",
+        "factor": 1
     },
     "MW_IN": {
         "min": 0,
         "max": 15,
-        "unit": "ppg"
+        "unit": "ppg",
+        "factor": 8.35
     },
     "MW_OUT": {
         "min": 0,
         "max": 15,
-        "unit": "ppg"
+        "unit": "ppg",
+        "factor": 8.35
     },
     "TEMP_IN": {
         "min": 0,
         "max": 100,
-        "unit": "°C"
+        "unit": "°C",
+        "factor": 1
     },
     "TEMP_OUT": {
         "min": 0,
         "max": 100,
-        "unit": "°C"
+        "unit": "°C",
+        "factor": 1
     },
     "H2S": {
         "min": 0,
         "max": 50,
-        "unit": "ppm"
+        "unit": "ppm",
+        "factor": 1
     },
     "LEL": {
         "min": 0,
         "max": 1,
-        "unit": "%"
+        "unit": "%",
+        "factor": 1
     },
     "Co2": {
         "min": 0,
         "max": 0.5,
-        "unit": "%"
+        "unit": "%",
+        "factor": 1
     }
 }

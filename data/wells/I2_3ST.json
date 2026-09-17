@@ -1,5 +1,5 @@
 {
-    "database_name": "DK-1176",
+    "database_name": "I2_3ST",
     "ip_address": "43.241.39.241",
     "rules": {
         "activity": {
@@ -22,7 +22,7 @@
                 "FLOW_IN": 1,
                 "PitSumVol1": 1,
                 "RETURNS": 1,
-                "ROT_TORQUE_AVG": 1,
+                "ROT_TORQUE_AVG": 0,
                 "CONDUCT_IN": 1,
                 "CONDUCT_OUT": 1
             },
@@ -177,8 +177,8 @@
                 "duration_seconds": 90
             },
             "SPP": {
-                "percentage_change": 1,
-                "duration_seconds": 5
+                "percentage_change": 20,
+                "duration_seconds": 30
             },
             "SPM": {
                 "percentage_change": 1,
@@ -206,7 +206,7 @@
                 "factor": 60
             },
             "HOOKLOAD": {
-                "min": 20,
+                "min": 10,
                 "max": 300,
                 "unit": "kflb",
                 "factor": 2.268

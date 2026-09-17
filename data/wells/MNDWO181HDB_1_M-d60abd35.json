@@ -1,6 +1,6 @@
 {
-    "database_name": "DK-1176",
-    "ip_address": "43.241.39.241",
+    "database_name": "MNDWO181HDB_1(M",
+    "ip_address": "182.173.66.254",
     "rules": {
         "activity": {
             "DRILLING": {
@@ -177,8 +177,8 @@
                 "duration_seconds": 90
             },
             "SPP": {
-                "percentage_change": 1,
-                "duration_seconds": 5
+                "percentage_change": 5,
+                "duration_seconds": 30
             },
             "SPM": {
                 "percentage_change": 1,
@@ -206,8 +206,8 @@
                 "factor": 60
             },
             "HOOKLOAD": {
-                "min": 20,
-                "max": 300,
+                "min": 10,
+                "max": 400,
                 "unit": "kflb",
                 "factor": 2.268
             },
@@ -231,7 +231,7 @@
             },
             "SPP": {
                 "min": 0,
-                "max": 4000,
+                "max": 400,
                 "unit": "psi",
                 "factor": 14.28
             },

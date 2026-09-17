@@ -499,7 +499,13 @@ def save(name, document):
 
 # The order the data folder lists them in, which is the order the form asks
 # for them in.
-RULE_BLOCKS = ("activity", "column_mapping", "conditions", "ranges")
+RULE_BLOCKS = (
+    "activity",
+    "column_mapping",
+    "conditions",
+    "ranges",
+    "drilling_criteria",
+)
 
 # The two activities the validator tells apart: bit on bottom, and anything
 # else. The second used to be called RIH, and rules saved before the rename
@@ -559,12 +565,28 @@ def validate_set(rules):
 
     # Absent, null and empty all mean the same thing to whoever filled the
     # form in, so they get the same sentence back.
-    missing = [block for block in RULE_BLOCKS if not rules.get(block)]
+    missing = [
+        block
+        for block in RULE_BLOCKS
+        if block not in rules
+    ]
 
     if missing:
         raise RuleFileError(
-            f"The rules are missing {', '.join(missing)}. All four blocks are "
+            f"The rules are missing {', '.join(missing)}. All rule blocks are "
             "required: " + ", ".join(RULE_BLOCKS)
+        )
+
+    drilling_criteria = rules.get("drilling_criteria")
+
+    if not isinstance(drilling_criteria, (int, float)):
+        raise RuleFileError(
+            "drilling_criteria must be a number"
+        )
+
+    if drilling_criteria < 0:
+        raise RuleFileError(
+            "drilling_criteria cannot be negative"
         )
 
     # The mapping first: it decides which parameter names the other three are
@@ -609,9 +631,16 @@ def tidy_set(rules):
 
 
 def template():
-    """The four files in data/, as the starting point for a new well."""
-    rules = {block: load(block) for block in RULE_BLOCKS}
+    rules = {
+        "activity": load("activity"),
+        "column_mapping": load("column_mapping"),
+        "conditions": load("conditions"),
+        "ranges": load("ranges"),
+        "drilling_criteria": 0.1,
+    }
 
-    rules["activity"] = rename_old_activities(rules["activity"])
+    rules["activity"] = rename_old_activities(
+        rules["activity"]
+    )
 
     return rules

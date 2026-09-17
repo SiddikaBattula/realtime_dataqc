@@ -221,6 +221,9 @@ class RealtimeValidator:
             self.ranges = rules["ranges"]
             self.activity_rules = rules["activity"]
             self.conditions = rules["conditions"]
+            self.drilling_criteria = float(
+                rules.get("drilling_criteria", 0.1)
+            )
 
             self._apply_conditions()
 
@@ -360,8 +363,6 @@ class RealtimeValidator:
         total_depth = data.get("DEPTH")
         bit_depth = data.get("BIT_DPT_MD")
 
-        # Before the subtraction: either one being missing used to raise
-        # TypeError here, and the agent reported it as a loop error.
         if total_depth is None or bit_depth is None:
             raise_alert(
                 f"[{date_str}] Cannot determine activity: "
@@ -374,10 +375,13 @@ class RealtimeValidator:
             return None
 
         gap = total_depth - bit_depth
-        activity = DRILLING if gap <= self.drilling_criteria else NON_DRILLING
 
-        # Only when it changes. At one row a second this line was most of the
-        # debug log, and every copy of it said the same thing.
+        activity = (
+            "DRILLING"
+            if gap <= self.drilling_criteria
+            else "NON DRILLING"
+        )
+
         if activity != self._last_activity:
             log.debug(
                 "Activity %s (hole %s - bit %s = %.2f m)",
@@ -581,7 +585,7 @@ class RealtimeValidator:
                 if elapsed >= self.ta_tg_duration:
                     raise_alert(
                         f"[{date_str}] {self.display_name('TA')} is greater than "
-                        f"{self.display_name('TG')} where BD-{bit_depth}",
+                        f"{self.display_name('TG')} where BD:{bit_depth}",
                         "TA",
                         "TG",
                         subject="TA_TG",
@@ -622,7 +626,7 @@ class RealtimeValidator:
 
                     if percent_change > self.spp_threshold:
                         raise_alert(
-                            f"[{date_str}] {self.display_name('SPP')} increased by {percent_change:.2f}% where BD-{bit_depth}{depth_unit}",
+                            f"[{date_str}] {self.display_name('SPP')} increased by {percent_change:.2f}% where BD:{bit_depth}{depth_unit}",
                             "SPP",
                             subject="SPP_CHANGE",
                             value=f"increased {percent_change:.2f}",
@@ -630,7 +634,7 @@ class RealtimeValidator:
 
                     elif percent_change < -self.spp_threshold:
                         raise_alert(
-                            f"[{date_str}] {self.display_name('SPP')} dropped by {abs(percent_change):.2f}% where BD-{bit_depth}{depth_unit}",
+                            f"[{date_str}] {self.display_name('SPP')} dropped by {abs(percent_change):.2f}% where BD:{bit_depth}{depth_unit}",
                             "SPP",
                             subject="SPP_CHANGE",
                             value=f"dropped {abs(percent_change):.2f}",
@@ -726,7 +730,7 @@ class RealtimeValidator:
 
                     if percent_change > self.rop_threshold:
                         raise_alert(
-                            f"[{date_str}] {self.display_name('ROP')} increased by {percent_change:.2f}% Where BD-{bit_depth}{depth_unit}",
+                            f"[{date_str}] {self.display_name('ROP')} increased by {percent_change:.2f}% Where BD:{bit_depth}{depth_unit}",
                             "ROP",
                             subject="ROP_CHANGE",
                             value=f"increased {percent_change:.2f}",
@@ -765,7 +769,7 @@ class RealtimeValidator:
 
                 if elapsed >= self.hookload_duration:
                     raise_alert(
-                        f"[{date_str}] Please check for data TS. {self.display_name('HOOKLOAD')} has remained unchanged for {int(elapsed)} seconds",
+                        f"[{date_str}] Please check for data Trans. {self.display_name('HOOKLOAD')} has remained unchanged for {int(elapsed)} seconds",
                         "HOOKLOAD",
                         subject="HOOKLOAD_STUCK",
                     )
@@ -947,6 +951,8 @@ def build_validator(sample_row, rules, rules_path=None):
         ranges=rules["ranges"],
         activity_rules=rules["activity"],
         conditions=rules["conditions"],
-        drilling_criteria=Config.DRILLING_CRITERIA,
+        drilling_criteria=float(
+            rules.get("drilling_criteria", 0.1)
+        ),
         rules_path=rules_path,
     )

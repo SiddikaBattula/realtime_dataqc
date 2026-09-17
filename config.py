@@ -52,7 +52,7 @@ class Config:
 
     # Hole depth minus bit depth, in metres: at or below this the bit is on
     # bottom (DRILLING), above it it is not (NON DRILLING).
-    DRILLING_CRITERIA = float(os.getenv("DRILLING_CRITERIA", "0.1"))
+    # DRILLING_CRITERIA = float(os.getenv("DRILLING_CRITERIA", "0.1"))
 
     # ---- where things live -------------------------------------------
     BASE_DIR = APP_DIR

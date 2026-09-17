@@ -20,11 +20,11 @@ print("Connected Successfully")
 cursor = conn.cursor()
 
 
-# cursor.execute("SELECT * from dataqcalert")
+# cursor.execute("SELECT * from timebaselastrecord")
 # cursor.execute("DELETE FROM dataqcalert")
 # cursor.execute("SELECT * FROM drilling WHERE TOT_DPT_MD = 1445.5")
 # cursor.execute("SHOW TABLES FROM `dk-1140-1-wc`;")
-cursor.execute("SHOW COLUMNS FROM timebaselastrecord")
+# cursor.execute("SHOW COLUMNS FROM timebaselastrecord")
 # cursor.execute("SELECT * FROM drilling LIMIT 5")
 # cursor.execute("""
 #     SELECT *
@@ -40,7 +40,13 @@ cursor.execute("SHOW COLUMNS FROM timebaselastrecord")
 # cursor.execute("SELECT TOT_DPT_MD FROM drilling WHERE TOT_DPT_MD BETWEEN 1484.00 AND 1512")
 # cursor.execute("SELECT Rdtime,TOT_DPT_MD,ROP FROM drilling WHERE TOT_DPT_MD BETWEEN 1257.0 AND 1260.0")
 
+cursor.execute("SELECT * FROM timebaselastrecord LIMIT 1")
+row = cursor.fetchone()
 
+columns = [col[0] for col in cursor.description]
+
+for col_name, value in zip(columns, row):
+    print(f"{col_name}: {value}")
 
 rows = cursor.fetchall()
 

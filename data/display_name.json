@@ -1,7 +1,10 @@
 {
-    "SPM": "Pump Stroke",
-    "ROP": "Rate of Penetration",
-    "TG": "Total Gas",
-    "WOB": "Weight on bit",
-    "SPP": "SPP"
+    "SPM": "SPM",
+    "ROP": "ROP",
+    "TG": "TG",
+    "WOB": "WOB",
+    "SPP": "SPP",
+    "TA": "TA",
+    "ROT_TORQUE_AVG": "Torque",
+    "HOOKLOAD": "Hookload"
 }

@@ -1,5 +1,5 @@
 {
-    "database_name": "DK-1176",
+    "database_name": "KJ-16",
     "ip_address": "43.241.39.241",
     "rules": {
         "activity": {
@@ -206,7 +206,7 @@
                 "factor": 60
             },
             "HOOKLOAD": {
-                "min": 20,
+                "min": 5,
                 "max": 300,
                 "unit": "kflb",
                 "factor": 2.268

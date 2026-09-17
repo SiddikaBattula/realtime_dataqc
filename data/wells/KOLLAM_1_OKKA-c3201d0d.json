@@ -1,5 +1,5 @@
 {
-    "database_name": "DK-1176",
+    "database_name": "KOLLAM_1(OKKA_",
     "ip_address": "43.241.39.241",
     "rules": {
         "activity": {
@@ -207,15 +207,15 @@
             },
             "HOOKLOAD": {
                 "min": 20,
-                "max": 300,
+                "max": 500,
                 "unit": "kflb",
-                "factor": 2.268
+                "factor": 2.208
             },
             "WOB": {
                 "min": 0,
                 "max": 30,
                 "unit": "kflb",
-                "factor": 2.268
+                "factor": 2.208
             },
             "RPM": {
                 "min": 0,
@@ -279,7 +279,7 @@
             },
             "LEL": {
                 "min": 0,
-                "max": 1,
+                "max": 0.5,
                 "unit": "%",
                 "factor": 1
             },

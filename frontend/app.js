@@ -51,7 +51,7 @@ const API_BASE = (() => {
     return location.protocol + '//' + location.hostname + ':' + API_PORT;
 })();
 
-const POLL_MS = 2500;
+const POLL_MS = 5000;
 
 // How long after a well appears to keep saying "starting" rather than
 // "all clear" - the manager takes up to five seconds to notice a new well.
@@ -161,13 +161,10 @@ function parseAlert(raw) {
   the colour of the row's edge - enough to scan a card without reading it.
 */
 const KINDS = [
-    [/above limit/i, 'critical'],
+    [/Please check for data Trans/i, 'critical'],
     // TA and TG may carry display names, so only the shape is matched.
-    [/ is greater than /i, 'critical'],
     [/Cannot determine activity/i, 'critical'],
     [/Unknown activity/i, 'critical'],
-    [/below limit/i, 'warn'],
-    [/cannot be 0/i, 'warn'],
     [/remained unchanged/i, 'warn'],
 ];
 
@@ -488,6 +485,8 @@ function renderAlerts(list, alerts) {
     }
 }
 
+
+
 function updateCard(card, state, alerts) {
     const activityNode = card.querySelector('.well-activity');
 
@@ -741,6 +740,27 @@ function renderActivity() {
     }
 }
 
+function renderDrillingCriteria() {
+    const host = document.getElementById(
+        'fields-drilling-criteria'
+    );
+
+    host.replaceChildren();
+
+    host.append(
+        field(
+            'Drilling Criteria',
+            draft.drilling_criteria ?? 0.1,
+            (value) => {
+                draft.drilling_criteria = Number(value) || 0;
+            },
+            {
+                type: 'text'
+            }
+        )
+    );
+}
+
 /*
   The three list-shaped blocks are laid out as tables.
 
@@ -934,6 +954,7 @@ function wrapScroll(grid) {
 
 function renderRules() {
     renderActivity();
+    renderDrillingCriteria();
     renderMapping();
     renderConditions();
     renderRanges();
