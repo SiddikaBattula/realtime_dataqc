@@ -1,12 +1,3 @@
-"""
-Start the whole thing: the config API in the foreground, the agents behind it.
-
-    python main.py
-
-The API is what wells are added to (POST /wells) and what the rule files are
-edited through; the agent manager runs in a background thread and starts an
-agent for each well the API has been told about. Open /docs to drive both.
-"""
 
 import threading
 
@@ -27,8 +18,6 @@ def start_manager():
 def main():
     setup_logging()
 
-    # Daemon, so Ctrl-C on the API brings the agents down with it rather than
-    # leaving the process alive with nothing serving.
     threading.Thread(
         target=start_manager,
         name="agent-manager",
@@ -36,7 +25,6 @@ def main():
     ).start()
 
     log.info(
-        "Starting config API on http://%s:%s/docs",
         Config.CONFIG_API_HOST,
         Config.CONFIG_API_PORT,
     )

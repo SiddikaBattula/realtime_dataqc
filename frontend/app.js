@@ -1019,7 +1019,7 @@ function renderRanges() {
             type: 'number',
             title: param.toUpperCase() === 'ROP'
                 ? 'Divides: the column is minutes per metre, the limits are '
-                    + unitOf(param) + ' - 60 / 0.5 = 120'
+                + unitOf(param) + ' - 60 / 0.5 = 120'
                 : 'Multiplies the reading before comparing',
         }));
     }

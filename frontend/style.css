@@ -437,12 +437,13 @@ body::before {
 .well-name {
     flex: none;
     margin: 0;
-    font-family: var(--mono);
+    font-family: Arial;
     font-size: 13.5px;
     font-weight: 650;
     letter-spacing: .01em;
     text-transform: uppercase;
-    white-space: nowrap;
+    white-space: normal;
+    word-break: break-word;
 }
 
 .well-activity {
@@ -457,6 +458,7 @@ body::before {
 .well-edit {
     margin-left: auto;
 }
+
 
 
 

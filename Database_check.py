@@ -40,16 +40,15 @@ cursor = conn.cursor()
 # cursor.execute("SELECT TOT_DPT_MD FROM drilling WHERE TOT_DPT_MD BETWEEN 1484.00 AND 1512")
 # cursor.execute("SELECT Rdtime,TOT_DPT_MD,ROP FROM drilling WHERE TOT_DPT_MD BETWEEN 1257.0 AND 1260.0")
 
-cursor.execute("SELECT * FROM timebaselastrecord LIMIT 1")
-row = cursor.fetchone()
+# cursor.execute("SELECT * FROM timebaselastrecord LIMIT 1")
 
-columns = [col[0] for col in cursor.description]
-
-for col_name, value in zip(columns, row):
-    print(f"{col_name}: {value}")
+cursor.execute("""
+SELECT Rdtime, HOOKLOAD_AVG, TOT_DPT_MD
+FROM drilling
+WHERE TIME(Rdtime) = '17:27:22'
+""")
 
 rows = cursor.fetchall()
-
 
 for row in rows:
     print(row)

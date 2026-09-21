@@ -196,6 +196,8 @@ class RealtimeValidator:
         self.previous_hookload = None
         self.previous_hookload_time = None
 
+        self.hookload_alerted = False
+
 
         # What the last reading was called, so a change of activity is logged
         # once rather than every second. What was last written to the alert log
