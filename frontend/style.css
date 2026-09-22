@@ -437,8 +437,8 @@ body::before {
 .well-name {
     flex: none;
     margin: 0;
-    font-family: Arial;
-    font-size: 13.5px;
+    font-family: "Roboto", sans-serif;
+    font-size: 16px;
     font-weight: 650;
     letter-spacing: .01em;
     text-transform: uppercase;
@@ -448,9 +448,10 @@ body::before {
 
 .well-activity {
     flex: none;
+    font-family: "Roboto", sans-serif;
     color: var(--amber);
     font-family: var(--mono);
-    font-size: 13px;
+    font-size: 16px;
     font-weight: 650;
 }
 
@@ -612,6 +613,7 @@ body::before {
 .alert-msg {
     flex: 1;
     min-width: 0;
+    font-family: "Roboto", sans-serif;
     font-size: 13.5px;
     line-height: 1.45;
     color: #D6DAEA;
@@ -640,12 +642,10 @@ body::before {
 
 .alert[data-tone="critical"] .alert-time {
     color: #ff758f;
-    font-weight: 700;
 }
 
 .alert[data-tone="critical"] .alert-msg {
     color: #ffffff;
-    font-weight: 600;
 }
 
 /* Card body when there is nothing wrong. */

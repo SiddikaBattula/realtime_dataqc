@@ -507,6 +507,7 @@ RULE_BLOCKS = (
     "conditions",
     "ranges",
     "drilling_criteria",
+    "bit_depth_threshold"
 )
 
 # Metres of hole depth minus bit depth that still count as on bottom. It used
@@ -516,7 +517,7 @@ RULE_BLOCKS = (
 # well's form opens with, and what a well saved before the change is read
 # under - see well_rules._read. Set it in .env as DEFAULT_DRILLING_CRITERIA.
 DEFAULT_DRILLING_CRITERIA = Config.DEFAULT_DRILLING_CRITERIA
-
+DEFAULT_BIT_DEPTH_THRESHOLD = Config.DEFAULT_BIT_DEPTH_THRESHOLD
 
 def drilling_criteria_of(rules):
     """
@@ -635,6 +636,21 @@ def validate_set(rules):
             "count as DRILLING, so the smallest it goes is 0"
         )
 
+    bit_depth_threshold = _as_number(
+        rules["bit_depth_threshold"],
+        "bit_depth_threshold"
+    )
+
+    if not math.isfinite(bit_depth_threshold):
+        raise RuleFileError(
+            "bit_depth_threshold must be a valid number"
+        )
+
+    if bit_depth_threshold < 0:
+        raise RuleFileError(
+            "bit_depth_threshold cannot be negative"
+        )
+
     # The mapping first: it decides which parameter names the other three are
     # allowed to mention.
     try:
@@ -695,6 +711,7 @@ def template():
         "conditions": load("conditions"),
         "ranges": load("ranges"),
         "drilling_criteria": DEFAULT_DRILLING_CRITERIA,
+        "bit_depth_threshold": DEFAULT_BIT_DEPTH_THRESHOLD,
     }
 
     rules["activity"] = rename_old_activities(

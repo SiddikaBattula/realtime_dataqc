@@ -199,6 +199,7 @@ function parseAlert(raw) {
 */
 const KINDS = [
     [/Please check for data Trans/i, 'critical'],
+    [/increased by/i, 'critical'],
     // TA and TG may carry display names, so only the shape is matched.
     [/Cannot determine activity/i, 'critical'],
     [/Unknown activity/i, 'critical'],
@@ -808,28 +809,35 @@ function renderActivity() {
   from the moment the bit lifts by a millimetre.
 */
 function renderDrillingCriteria() {
-    const host = document.getElementById('fields-drilling-criteria');
+    const host = document.getElementById('criteria-row');
+
     host.replaceChildren();
 
-    // No min="0" on the box, though a negative margin is refused: a number
-    // input the browser judges invalid blocks submit with a bubble it cannot
-    // show while its section is collapsed, and the form would just stop
-    // responding. Every other figure here is checked by the API and answered
-    // in #modal-error, and this one is checked the same way.
-    host.append(field(
-        '',
-        draft.drilling_criteria,
-        (value) => {
-            draft.drilling_criteria = numberOrBlank(value);
-        },
-        {
-            compact: true,
-            type: 'number',
-            placeholder: String(DEFAULT_DRILLING_CRITERIA),
-            title: 'Hole depth − bit depth at or under this is DRILLING, '
-                + 'over it is NON DRILLING',
-        },
-    ));
+    host.append(
+        field(
+            'Off-bottom margin',
+            draft.drilling_criteria,
+            (value) => {
+                draft.drilling_criteria = numberOrBlank(value);
+            },
+            {
+                placeholder: '0.1',
+            },
+        )
+    );
+
+    host.append(
+        field(
+            'Bit Depth Threshold',
+            draft.bit_depth_threshold,
+            (value) => {
+                draft.bit_depth_threshold = numberOrBlank(value);
+            },
+            {
+                placeholder: '5',
+            },
+        )
+    );
 }
 
 /*

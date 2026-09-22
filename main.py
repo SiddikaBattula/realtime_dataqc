@@ -24,10 +24,7 @@ def main():
         daemon=True,
     ).start()
 
-    log.info(
-        Config.CONFIG_API_HOST,
-        Config.CONFIG_API_PORT,
-    )
+    log.info("%s:%s", Config.CONFIG_API_HOST, Config.CONFIG_API_PORT)
 
     uvicorn.run(
         app,

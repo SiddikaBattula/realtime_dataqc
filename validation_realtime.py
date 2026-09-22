@@ -145,7 +145,7 @@ class ValidationResult:
 
 
 class RealtimeValidator:
-    def __init__(self, mapper, ranges, activity_rules, conditions, drilling_criteria,
+    def __init__(self, mapper, ranges, activity_rules, conditions, drilling_criteria,bit_depth_threshold,
                  rules_path=None, well=None):
         # One process runs an agent per well and they all write to the same
         # files, so the well's name goes in the logger rather than being left
@@ -183,11 +183,19 @@ class RealtimeValidator:
         # ---- persistent state (was module-level globals) ----
         self.ta_gt_tg_start = None
 
-        self.previous_spp = None
-        self.previous_spp_time = None
+        # self.previous_spp = None
+        # self.previous_spp_time = None
 
-        self.previous_totalspm = None
-        self.previous_totalspm_time = None
+        self.spp_spm_factor = 0.0
+
+# Factor calculation timer
+        self.spp_spm_factor_time = datetime.now()
+
+        # Comparison timer
+        self.spp_comparison_time = datetime.now()
+
+        # Factor refresh interval
+        self.spp_factor_duration = 60.0
 
         self.previous_rop = None
         self.previous_rop_time = None
@@ -203,6 +211,9 @@ class RealtimeValidator:
         # once rather than every second. What was last written to the alert log
         # is the alert log's own business - see AlertLog.
         self._last_activity = None
+
+        self.last_bit_depth = None
+        self.bit_depth_threshold = bit_depth_threshold
 
         # What the well's rule file looked like when it was last read in.
         self._rule_stamp = _stamp(self.rules_path)
@@ -230,8 +241,8 @@ class RealtimeValidator:
         self.spp_threshold = conditions["SPP"]["percentage_change"]
         self.spp_duration = conditions["SPP"]["duration_seconds"]
 
-        self.totalspm_threshold = conditions["SPM"]["percentage_change"]
-        self.totalspm_duration = conditions["SPM"]["duration_seconds"]
+        # self.totalspm_threshold = conditions["SPM"]["percentage_change"]
+        # self.totalspm_duration = conditions["SPM"]["duration_seconds"]
 
         self.rop_threshold = conditions["ROP"]["percentage_change"]
         self.rop_duration = conditions["ROP"]["duration_seconds"]
@@ -279,6 +290,7 @@ class RealtimeValidator:
             self.activity_rules = rules["activity"]
             self.conditions = rules["conditions"]
             self.drilling_criteria = rule_files.drilling_criteria_of(rules)
+            self.bit_depth_threshold = rules.get("bit_depth_threshold",rule_files.DEFAULT_BIT_DEPTH_THRESHOLD)
 
             self._apply_conditions()
             self._refresh_alert_log()
@@ -768,70 +780,70 @@ class RealtimeValidator:
                     self.log.debug("TA>TG cleared")
                 self.ta_gt_tg_start = None
 
-        # ------------------------------------------------------------------
-        # 4. SPP change
-        # ------------------------------------------------------------------
-        spp = normalized_data.get("SPP")
+        # # ------------------------------------------------------------------
+        # # 4. SPP change
+        # # ------------------------------------------------------------------
+        # spp = normalized_data.get("SPP")
 
-        if spp is not None and spp > 0:
-            current_time = datetime.now()
+        # if spp is not None and spp > 0:
+        #     current_time = datetime.now()
 
-            # First value
-            if self.previous_spp is None:
-                self.previous_spp = spp
-                self.previous_spp_time = current_time
+        #     # First value
+        #     if self.previous_spp is None:
+        #         self.previous_spp = spp
+        #         self.previous_spp_time = current_time
 
-            # Prevent division by zero
-            elif self.previous_spp <= 0:
-                self.previous_spp = spp
-                self.previous_spp_time = current_time
+        #     # Prevent division by zero
+        #     elif self.previous_spp <= 0:
+        #         self.previous_spp = spp
+        #         self.previous_spp_time = current_time
 
-            else:
-                elapsed = (current_time - self.previous_spp_time).total_seconds()
+        #     else:
+        #         elapsed = (current_time - self.previous_spp_time).total_seconds()
 
-                if elapsed >= self.spp_duration:
+        #         if elapsed >= self.spp_duration:
 
-                    percent_change = ((spp - self.previous_spp) / self.previous_spp) * 100
+        #             percent_change = ((spp - self.previous_spp) / self.previous_spp) * 100
 
-                    self.log.debug("SPP %s -> %s over %.1fs = %.2f%%",
-                              self.previous_spp, spp, elapsed, percent_change)
+        #             self.log.debug("SPP %s -> %s over %.1fs = %.2f%%",
+        #                       self.previous_spp, spp, elapsed, percent_change)
 
-                    if percent_change > self.spp_threshold:
-                        raise_alert(
-                            f"[{date_str}] {self.display_name('SPP')} increased by {percent_change:.2f}% where BD:{bit_depth}{depth_unit}",
-                            "SPP",
-                            subject="SPP_CHANGE",
-                            value=f"increased {percent_change:.2f}",
-                            why=self.alert_log.change_reason(
-                                "SPP", self.previous_spp, spp, elapsed,
-                                percent_change, self.spp_threshold,
-                                self.spp_duration,
-                            ),
-                        )
+        #             if percent_change > self.spp_threshold:
+        #                 raise_alert(
+        #                     f"[{date_str}] {self.display_name('SPP')} increased by {percent_change:.2f}% where BD:{bit_depth}{depth_unit}",
+        #                     "SPP",
+        #                     subject="SPP_CHANGE",
+        #                     value=f"increased {percent_change:.2f}",
+        #                     why=self.alert_log.change_reason(
+        #                         "SPP", self.previous_spp, spp, elapsed,
+        #                         percent_change, self.spp_threshold,
+        #                         self.spp_duration,
+        #                     ),
+        #                 )
 
-                    elif percent_change < -self.spp_threshold:
-                        raise_alert(
-                            f"[{date_str}] {self.display_name('SPP')} dropped by {abs(percent_change):.2f}% where BD:{bit_depth}{depth_unit}",
-                            "SPP",
-                            subject="SPP_CHANGE",
-                            value=f"dropped {abs(percent_change):.2f}",
-                            why=self.alert_log.change_reason(
-                                "SPP", self.previous_spp, spp, elapsed,
-                                percent_change, self.spp_threshold,
-                                self.spp_duration,
-                            ),
-                        )
+        #             elif percent_change < -self.spp_threshold:
+        #                 raise_alert(
+        #                     f"[{date_str}] {self.display_name('SPP')} dropped by {abs(percent_change):.2f}% where BD:{bit_depth}{depth_unit}",
+        #                     "SPP",
+        #                     subject="SPP_CHANGE",
+        #                     value=f"dropped {abs(percent_change):.2f}",
+        #                     why=self.alert_log.change_reason(
+        #                         "SPP", self.previous_spp, spp, elapsed,
+        #                         percent_change, self.spp_threshold,
+        #                         self.spp_duration,
+        #                     ),
+        #                 )
 
-                    else:
-                        # Looked and found a steady SPP: the next move is a new
-                        # alert even if it is the same size as the last one.
-                        self._last_alerted.pop("SPP_CHANGE", None)
+        #             else:
+        #                 # Looked and found a steady SPP: the next move is a new
+        #                 # alert even if it is the same size as the last one.
+        #                 self._last_alerted.pop("SPP_CHANGE", None)
 
-                    # Reset baseline
-                    self.previous_spp = spp
-                    self.previous_spp_time = current_time
+        #             # Reset baseline
+        #             self.previous_spp = spp
+        #             self.previous_spp_time = current_time
 
-                    spp_percentage = round(percent_change, 2)
+        #             spp_percentage = round(percent_change, 2)
 
         # # ------------------------------------------------------------------
         # # 5. TotalSPM change
@@ -880,6 +892,155 @@ class RealtimeValidator:
 
         #             totalspm_percentage = round(percent_change, 2)
 
+
+
+        # ------------------------------------------------------------------
+        # 4.SPP alert 
+        # ------------------------------------------------------------------
+        curr_spp = normalized_data.get("SPP")
+        curr_spm = self._get_total_spm(normalized_data)
+
+        curr_spp = self._apply_factor(
+            "SPP",
+            normalized_data.get("SPP"),
+            self.ranges.get("SPP", {}).get("factor"),
+        )
+
+        curr_spm = self._apply_factor(
+            "SPM",
+            self._get_total_spm(normalized_data),
+            self.ranges.get("SPM", {}).get("factor"),
+        )
+
+        self.log.warning(
+            "DEBUG 1 | SPP=%s | SPM=%s | MP1=%s | MP2=%s | MP3=%s | MP4=%s",
+            curr_spp,
+            curr_spm,
+            normalized_data.get("MP1_SPM"),
+            normalized_data.get("MP2_SPM"),
+            normalized_data.get("MP3_SPM"),
+            normalized_data.get("MP4_SPM"),
+        )
+
+        if (
+            curr_spp is not None
+            and curr_spm is not None
+            and curr_spm > 0
+        ):
+
+
+            current_time = datetime.now()
+
+     
+            input_factor = self.spp_threshold / 100.0
+
+    
+            factor_elapsed = (
+                current_time - self.spp_spm_factor_time
+            ).total_seconds()
+
+            self.log.warning(
+                "Factor age = %.1fs",
+                factor_elapsed
+            )
+
+            if factor_elapsed >= self.spp_factor_duration:
+
+                self.spp_spm_factor = curr_spp / curr_spm
+
+                self.spp_spm_factor_time = current_time
+
+                self.log.warning(
+                    "FACTOR UPDATED | SPP=%.4f | SPM=%.4f | Factor=%.4f",
+                    curr_spp,
+                    curr_spm,
+                    self.spp_spm_factor,
+                )
+
+
+
+            if self.spp_spm_factor > 0:
+
+                comparison_elapsed = (
+                    current_time - self.spp_comparison_time
+                ).total_seconds()
+
+                self.log.warning(
+                    "Comparison age = %.1fs",
+                    comparison_elapsed
+                )
+
+                if comparison_elapsed >= 5:
+
+                    # Reset comparison timer
+                    self.spp_comparison_time = current_time
+
+
+                    calculated_spp = curr_spm * self.spp_spm_factor
+
+                    upper_limit = calculated_spp + (
+                        calculated_spp * input_factor
+                    )
+
+                    lower_limit = calculated_spp - (
+                        calculated_spp * input_factor
+                    )
+
+                    self.log.warning(
+                        "COMPARE | Factor=%.4f | Calculated SPP=%.4f | "
+                        "Current SPP=%.4f | Upper=%.4f | Lower=%.4f",
+                        self.spp_spm_factor,
+                        calculated_spp,
+                        curr_spp,
+                        upper_limit,
+                        lower_limit,
+                    )
+
+
+                    if upper_limit > calculated_spp:
+
+                        self.log.warning(
+                            "ALERT HIGH | %.2f > %.2f",
+                            upper_limit,
+                            calculated_spp,
+                        )
+
+                        raise_alert(
+                            f"SPP is out of expected range",
+                            subject="SPP_SPM_FACTOR",
+                            value=f"{calculated_spp:.2f}",
+                        )
+
+
+                    elif lower_limit < calculated_spp:
+
+                        self.log.warning(
+                            "ALERT LOW | %.2f < %.2f",
+                            lower_limit,
+                            calculated_spp,
+                        )
+
+                        raise_alert(
+                            f"SPP is out of expected range",
+                            subject="SPP_SPM_FACTOR",
+                            value=f"{calculated_spp:.2f}",
+                        )
+
+                    # ------------------------------------------------------
+                    # NO ALERT
+                    # ------------------------------------------------------
+
+                    else:
+
+                        self.log.warning(
+                            "NO ALERT | %.2f is within %.2f and %.2f",
+                            calculated_spp,
+                            lower_limit,
+                            upper_limit,
+                        ) 
+
+
+
         # ------------------------------------------------------------------
         # 6. ROP change
         # ------------------------------------------------------------------
@@ -925,7 +1086,7 @@ class RealtimeValidator:
 
                     if percent_change > self.rop_threshold:
                         raise_alert(
-                            f"[{date_str}] {self.display_name('ROP')} increased by {percent_change:.2f}% Where BD:{bit_depth}{depth_unit}",
+                            f"[{date_str}] {self.display_name('ROP')} increased by {percent_change:.2f}%, BD:{bit_depth}{depth_unit}",
                             "ROP",
                             subject="ROP_CHANGE",
                             value=f"increased {percent_change:.2f}",
@@ -986,6 +1147,55 @@ class RealtimeValidator:
                 self.previous_hookload_time = current_time
 
                 self._last_alerted.pop("HOOKLOAD_STUCK", None)
+
+
+
+        # ------------------------------------------------------------------
+        # Depth Jump alert
+        # ------------------------------------------------------------------
+        bit_depth = normalized_data.get("BIT_DPT_MD")
+        if bit_depth is not None:
+
+            self.log.debug(
+                "BIT DEPTH CHECK | Current=%.2f | Previous=%s | Threshold=%.2f",
+                bit_depth,
+                f"{self.last_bit_depth:.2f}" if self.last_bit_depth is not None else "None",
+                self.bit_depth_threshold,
+            )
+
+            if self.last_bit_depth is not None:
+
+                difference = abs(bit_depth - self.last_bit_depth)
+
+                self.log.debug(
+                    "BIT DEPTH DIFF | Previous=%.2f | Current=%.2f | Difference=%.2f | Threshold=%.2f",
+                    self.last_bit_depth,
+                    bit_depth,
+                    difference,
+                    self.bit_depth_threshold,
+                )
+
+                if difference > self.bit_depth_threshold:
+                        raise_alert(
+                            (
+                                f"[{date_str}] "
+                                f"Bit Depth changed by {difference:.2f}{depth_unit} "
+                                f"where BD:{bit_depth}{depth_unit}"
+                            ),
+                            "BIT_DPT_MD",
+                            subject="BIT_DEPTH_CHANGE",
+                            value=round(difference, 2),
+                            why=(
+                                f"Previous BIT_DPT_MD={self.last_bit_depth:.2f}, "
+                                f"Current BIT_DPT_MD={bit_depth:.2f}, "
+                                f"Difference={difference:.2f}, "
+                                f"Threshold={self.bit_depth_threshold:.2f}"
+                            ),
+                        )
+
+                self.last_bit_depth = bit_depth
+
+        
 
         # ------------------------------------------------------------------
 
@@ -1060,6 +1270,7 @@ def build_validator(sample_row, rules, rules_path=None, well=None):
         activity_rules=rules["activity"],
         conditions=rules["conditions"],
         drilling_criteria=rule_files.drilling_criteria_of(rules),
+        bit_depth_threshold=rules.get("bit_depth_threshold",rule_files.DEFAULT_BIT_DEPTH_THRESHOLD),
         rules_path=rules_path,
         well=well,
     )

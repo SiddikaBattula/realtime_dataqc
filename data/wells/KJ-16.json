@@ -1,5 +1,5 @@
 {
-    "database_name": "KJ-16",
+    "database_name": "kj-16",
     "ip_address": "43.241.39.241",
     "rules": {
         "activity": {
@@ -177,7 +177,7 @@
                 "duration_seconds": 90
             },
             "SPP": {
-                "percentage_change": 1,
+                "percentage_change": 2,
                 "duration_seconds": 5
             },
             "SPM": {
@@ -206,8 +206,8 @@
                 "factor": 60
             },
             "HOOKLOAD": {
-                "min": 5,
-                "max": 300,
+                "min": 10,
+                "max": 200,
                 "unit": "kflb",
                 "factor": 2.268
             },
@@ -289,6 +289,8 @@
                 "unit": "%",
                 "factor": 1
             }
-        }
+        },
+        "drilling_criteria": 0.01,
+        "bit_depth_threshold": 5
     }
 }

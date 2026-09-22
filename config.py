@@ -77,7 +77,7 @@ class Config:
     # only the starting value, and what a well saved before the setting existed
     # is read under.
     DEFAULT_DRILLING_CRITERIA = float(os.getenv("DEFAULT_DRILLING_CRITERIA", "0.1"))
-
+    DEFAULT_BIT_DEPTH_THRESHOLD = float(os.getenv("DEFAULT_BIT_DEPTH_THRESHOLD", "5"))
     # ---- where things live -------------------------------------------
     BASE_DIR = APP_DIR
 
@@ -149,3 +149,5 @@ class Config:
     DASHBOARD_CARD_MIN_HEIGHT = int(os.getenv("DASHBOARD_CARD_MIN_HEIGHT", "90"))
     DASHBOARD_CARD_MAX_HEIGHT = int(os.getenv("DASHBOARD_CARD_MAX_HEIGHT", "900"))
     DASHBOARD_CARD_MAX_COLUMNS = int(os.getenv("DASHBOARD_CARD_MAX_COLUMNS", "4"))
+
+    

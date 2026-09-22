@@ -117,6 +117,9 @@ def _read(path):
         rules.setdefault(
             "drilling_criteria", rule_files.DEFAULT_DRILLING_CRITERIA
         )
+        rules.setdefault(
+            "bit_depth_threshold",rule_files.DEFAULT_BIT_DEPTH_THRESHOLD
+        )
 
     return record
 
