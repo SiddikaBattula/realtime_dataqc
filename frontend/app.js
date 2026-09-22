@@ -200,6 +200,7 @@ function parseAlert(raw) {
 const KINDS = [
     [/Please check for data Trans/i, 'critical'],
     [/increased by/i, 'critical'],
+    [/Bit Depth jump by/i, 'critical'],
     // TA and TG may carry display names, so only the shape is matched.
     [/Cannot determine activity/i, 'critical'],
     [/Unknown activity/i, 'critical'],

@@ -362,7 +362,7 @@ body::before {
     position: relative;
     display: flex;
     flex-direction: column;
-    border: 1px solid var(--border-soft);
+    border: 3px solid var(--border-soft);
     border-radius: var(--radius);
     background: linear-gradient(165deg, rgba(31, 36, 53, .85), var(--surface) 58%);
     box-shadow: var(--shadow);
@@ -634,7 +634,7 @@ body::before {
 
 .alert[data-tone="critical"] {
     background: rgba(255, 59, 92, 0.12);
-    border-left: 6px solid #ff3b5c;
+    border-left: 3px solid #ff3b5c;
     border-top: 1px solid rgba(255, 59, 92, 0.25);
     border-bottom: 1px solid rgba(255, 59, 92, 0.25);
     box-shadow: 0 0 12px rgba(255, 59, 92, 0.25);

@@ -894,150 +894,150 @@ class RealtimeValidator:
 
 
 
-        # ------------------------------------------------------------------
-        # 4.SPP alert 
-        # ------------------------------------------------------------------
-        curr_spp = normalized_data.get("SPP")
-        curr_spm = self._get_total_spm(normalized_data)
+        # # ------------------------------------------------------------------
+        # # 4.SPP alert 
+        # # ------------------------------------------------------------------
+        # curr_spp = normalized_data.get("SPP")
+        # curr_spm = self._get_total_spm(normalized_data)
 
-        curr_spp = self._apply_factor(
-            "SPP",
-            normalized_data.get("SPP"),
-            self.ranges.get("SPP", {}).get("factor"),
-        )
+        # curr_spp = self._apply_factor(
+        #     "SPP",
+        #     normalized_data.get("SPP"),
+        #     self.ranges.get("SPP", {}).get("factor"),
+        # )
 
-        curr_spm = self._apply_factor(
-            "SPM",
-            self._get_total_spm(normalized_data),
-            self.ranges.get("SPM", {}).get("factor"),
-        )
+        # curr_spm = self._apply_factor(
+        #     "SPM",
+        #     self._get_total_spm(normalized_data),
+        #     self.ranges.get("SPM", {}).get("factor"),
+        # )
 
-        self.log.warning(
-            "DEBUG 1 | SPP=%s | SPM=%s | MP1=%s | MP2=%s | MP3=%s | MP4=%s",
-            curr_spp,
-            curr_spm,
-            normalized_data.get("MP1_SPM"),
-            normalized_data.get("MP2_SPM"),
-            normalized_data.get("MP3_SPM"),
-            normalized_data.get("MP4_SPM"),
-        )
+        # self.log.warning(
+        #     "DEBUG 1 | SPP=%s | SPM=%s | MP1=%s | MP2=%s | MP3=%s | MP4=%s",
+        #     curr_spp,
+        #     curr_spm,
+        #     normalized_data.get("MP1_SPM"),
+        #     normalized_data.get("MP2_SPM"),
+        #     normalized_data.get("MP3_SPM"),
+        #     normalized_data.get("MP4_SPM"),
+        # )
 
-        if (
-            curr_spp is not None
-            and curr_spm is not None
-            and curr_spm > 0
-        ):
+        # if (
+        #     curr_spp is not None
+        #     and curr_spm is not None
+        #     and curr_spm > 0
+        # ):
 
 
-            current_time = datetime.now()
+        #     current_time = datetime.now()
 
      
-            input_factor = self.spp_threshold / 100.0
+        #     input_factor = self.spp_threshold / 100.0
 
     
-            factor_elapsed = (
-                current_time - self.spp_spm_factor_time
-            ).total_seconds()
+        #     factor_elapsed = (
+        #         current_time - self.spp_spm_factor_time
+        #     ).total_seconds()
 
-            self.log.warning(
-                "Factor age = %.1fs",
-                factor_elapsed
-            )
+        #     self.log.warning(
+        #         "Factor age = %.1fs",
+        #         factor_elapsed
+        #     )
 
-            if factor_elapsed >= self.spp_factor_duration:
+        #     if factor_elapsed >= self.spp_factor_duration:
 
-                self.spp_spm_factor = curr_spp / curr_spm
+        #         self.spp_spm_factor = curr_spp / curr_spm
 
-                self.spp_spm_factor_time = current_time
+        #         self.spp_spm_factor_time = current_time
 
-                self.log.warning(
-                    "FACTOR UPDATED | SPP=%.4f | SPM=%.4f | Factor=%.4f",
-                    curr_spp,
-                    curr_spm,
-                    self.spp_spm_factor,
-                )
-
-
-
-            if self.spp_spm_factor > 0:
-
-                comparison_elapsed = (
-                    current_time - self.spp_comparison_time
-                ).total_seconds()
-
-                self.log.warning(
-                    "Comparison age = %.1fs",
-                    comparison_elapsed
-                )
-
-                if comparison_elapsed >= 5:
-
-                    # Reset comparison timer
-                    self.spp_comparison_time = current_time
+        #         self.log.warning(
+        #             "FACTOR UPDATED | SPP=%.4f | SPM=%.4f | Factor=%.4f",
+        #             curr_spp,
+        #             curr_spm,
+        #             self.spp_spm_factor,
+        #         )
 
 
-                    calculated_spp = curr_spm * self.spp_spm_factor
 
-                    upper_limit = calculated_spp + (
-                        calculated_spp * input_factor
-                    )
+        #     if self.spp_spm_factor > 0:
 
-                    lower_limit = calculated_spp - (
-                        calculated_spp * input_factor
-                    )
+        #         comparison_elapsed = (
+        #             current_time - self.spp_comparison_time
+        #         ).total_seconds()
 
-                    self.log.warning(
-                        "COMPARE | Factor=%.4f | Calculated SPP=%.4f | "
-                        "Current SPP=%.4f | Upper=%.4f | Lower=%.4f",
-                        self.spp_spm_factor,
-                        calculated_spp,
-                        curr_spp,
-                        upper_limit,
-                        lower_limit,
-                    )
+        #         self.log.warning(
+        #             "Comparison age = %.1fs",
+        #             comparison_elapsed
+        #         )
+
+        #         if comparison_elapsed >= 5:
+
+        #             # Reset comparison timer
+        #             self.spp_comparison_time = current_time
 
 
-                    if upper_limit > calculated_spp:
+        #             calculated_spp = curr_spm * self.spp_spm_factor
 
-                        self.log.warning(
-                            "ALERT HIGH | %.2f > %.2f",
-                            upper_limit,
-                            calculated_spp,
-                        )
+        #             upper_limit = calculated_spp + (
+        #                 calculated_spp * input_factor
+        #             )
 
-                        raise_alert(
-                            f"SPP is out of expected range",
-                            subject="SPP_SPM_FACTOR",
-                            value=f"{calculated_spp:.2f}",
-                        )
+        #             lower_limit = calculated_spp - (
+        #                 calculated_spp * input_factor
+        #             )
+
+        #             self.log.warning(
+        #                 "COMPARE | Factor=%.4f | Calculated SPP=%.4f | "
+        #                 "Current SPP=%.4f | Upper=%.4f | Lower=%.4f",
+        #                 self.spp_spm_factor,
+        #                 calculated_spp,
+        #                 curr_spp,
+        #                 upper_limit,
+        #                 lower_limit,
+        #             )
 
 
-                    elif lower_limit < calculated_spp:
+        #             if upper_limit > calculated_spp:
 
-                        self.log.warning(
-                            "ALERT LOW | %.2f < %.2f",
-                            lower_limit,
-                            calculated_spp,
-                        )
+        #                 self.log.warning(
+        #                     "ALERT HIGH | %.2f > %.2f",
+        #                     upper_limit,
+        #                     calculated_spp,
+        #                 )
 
-                        raise_alert(
-                            f"SPP is out of expected range",
-                            subject="SPP_SPM_FACTOR",
-                            value=f"{calculated_spp:.2f}",
-                        )
+        #                 raise_alert(
+        #                     f"SPP is out of expected range",
+        #                     subject="SPP_SPM_FACTOR",
+        #                     value=f"{calculated_spp:.2f}",
+        #                 )
 
-                    # ------------------------------------------------------
-                    # NO ALERT
-                    # ------------------------------------------------------
 
-                    else:
+        #             elif lower_limit < calculated_spp:
 
-                        self.log.warning(
-                            "NO ALERT | %.2f is within %.2f and %.2f",
-                            calculated_spp,
-                            lower_limit,
-                            upper_limit,
-                        ) 
+        #                 self.log.warning(
+        #                     "ALERT LOW | %.2f < %.2f",
+        #                     lower_limit,
+        #                     calculated_spp,
+        #                 )
+
+        #                 raise_alert(
+        #                     f"SPP is out of expected range",
+        #                     subject="SPP_SPM_FACTOR",
+        #                     value=f"{calculated_spp:.2f}",
+        #                 )
+
+        #             # ------------------------------------------------------
+        #             # NO ALERT
+        #             # ------------------------------------------------------
+
+        #             else:
+
+        #                 self.log.warning(
+        #                     "NO ALERT | %.2f is within %.2f and %.2f",
+        #                     calculated_spp,
+        #                     lower_limit,
+        #                     upper_limit,
+        #                 ) 
 
 
 
@@ -1154,46 +1154,34 @@ class RealtimeValidator:
         # Depth Jump alert
         # ------------------------------------------------------------------
         bit_depth = normalized_data.get("BIT_DPT_MD")
-        if bit_depth is not None:
+        self.log.warning(
+            "BIT_DPT_MD VALUE = %s",
+            bit_depth,
+        )
 
-            self.log.debug(
-                "BIT DEPTH CHECK | Current=%.2f | Previous=%s | Threshold=%.2f",
-                bit_depth,
-                f"{self.last_bit_depth:.2f}" if self.last_bit_depth is not None else "None",
-                self.bit_depth_threshold,
-            )
-
-            if self.last_bit_depth is not None:
+        if self.last_bit_depth is not None:
 
                 difference = abs(bit_depth - self.last_bit_depth)
 
-                self.log.debug(
-                    "BIT DEPTH DIFF | Previous=%.2f | Current=%.2f | Difference=%.2f | Threshold=%.2f",
-                    self.last_bit_depth,
+                self.log.warning(
+                    "BIT DEPTH CHECK |current=%s | Previous=%s | Threshold=%.2f",
                     bit_depth,
-                    difference,
+                    f"{self.last_bit_depth:.2f}" if self.last_bit_depth is not None else "None",
                     self.bit_depth_threshold,
                 )
 
                 if difference > self.bit_depth_threshold:
-                        raise_alert(
+                    raise_alert(
                             (
                                 f"[{date_str}] "
-                                f"Bit Depth changed by {difference:.2f}{depth_unit} "
-                                f"where BD:{bit_depth}{depth_unit}"
+                                f"Bit Depth jump by {difference:.2f}{depth_unit} "
                             ),
                             "BIT_DPT_MD",
                             subject="BIT_DEPTH_CHANGE",
                             value=round(difference, 2),
-                            why=(
-                                f"Previous BIT_DPT_MD={self.last_bit_depth:.2f}, "
-                                f"Current BIT_DPT_MD={bit_depth:.2f}, "
-                                f"Difference={difference:.2f}, "
-                                f"Threshold={self.bit_depth_threshold:.2f}"
-                            ),
                         )
 
-                self.last_bit_depth = bit_depth
+        self.last_bit_depth = bit_depth
 
         
 
