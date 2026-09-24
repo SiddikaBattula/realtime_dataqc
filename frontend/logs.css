@@ -1,0 +1,200 @@
+/*
+  The log page.
+
+  Rows, not cards: one hairline between them, no border, no radius, no shadow.
+  The tone is a 4px flag on the left edge and nothing else, so hundreds of rows
+  read as a log rather than as a stack of tiles.
+
+  Its own file rather than style.css: the dashboard's stylesheet is 1400 lines
+  of grid, cards and modal that this page has no use for, and the two have no
+  selectors in common.
+*/
+
+:root {
+    --bg: #0B0D14;
+    --panel: #11141F;
+    --border: #232838;
+    --text: #E7EAF5;
+    --text-2: #8A91AC;
+    --text-3: #565D78;
+    --amber: #FFB224;
+    --amber-bg: rgba(255, 178, 36, .08);
+    --red: #FF4D6A;
+    --red-bg: rgba(255, 77, 106, .09);
+    --blue: #3D9EFF;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.4 -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+/* ---- header ---------------------------------------------------------- */
+
+header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: rgba(11, 13, 20, .92);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 20px 12px;
+}
+
+h1 {
+    margin: 0 0 10px;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -.01em;
+}
+
+.toolbar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.toolbar input {
+    flex: 1;
+    max-width: 320px;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font: 12.5px inherit;
+    background: var(--panel);
+    color: var(--text);
+    outline: none;
+}
+
+.toolbar input:focus {
+    border-color: var(--blue);
+}
+
+.toolbar .chip {
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-2);
+    cursor: pointer;
+    background: var(--panel);
+    user-select: none;
+}
+
+.toolbar .chip[data-active="1"] {
+    border-color: var(--blue);
+    color: var(--blue);
+}
+
+/* ---- the log --------------------------------------------------------- */
+
+main {
+    width: 100%;
+    padding: 4px 0 40px;
+}
+
+.row {
+    position: relative;
+    display: flex;
+    gap: 14px;
+    align-items: baseline;
+    padding: 3px 20px;
+    border-bottom: 1px solid rgba(35, 40, 56, .55);
+}
+
+.row::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+}
+
+.row[data-tone="critical"]::before {
+    background: var(--red);
+}
+
+.row[data-tone="warn"]::before {
+    background: var(--amber);
+}
+
+.row[data-tone="info"]::before {
+    background: var(--blue);
+}
+
+.row[data-tone="critical"] {
+    border-left-color: var(--red);
+    background: var(--red-bg);
+}
+
+.row[data-tone="warn"] {
+    border-left-color: var(--amber);
+    background: var(--amber-bg);
+}
+
+.row[data-tone="info"] {
+    border-left-color: var(--blue);
+}
+
+/* Rows that arrived on a poll flash once, so something appearing while the
+   page is being read is noticed rather than silently shifting the list. */
+.row.is-new {
+    animation: flash .9s ease;
+}
+
+@keyframes flash {
+    from {
+        background: rgba(61, 158, 255, .22);
+    }
+}
+
+.time {
+    flex: none;
+    font-family: "Roboto", sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-3);
+    min-width: 100px;
+    padding-left: 16px;
+}
+
+.msg {
+    font-family: "Roboto", sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    color: #D6DAEA;
+    word-break: break-word;
+}
+
+.row[data-tone="critical"] .time {
+    color: #FF8FA3;
+}
+
+.row[data-tone="critical"] .msg {
+    color: #FFE1E7;
+}
+
+.row[data-tone="warn"] .time {
+    color: #FFCB70;
+}
+
+/* ---- nothing to show ------------------------------------------------- */
+
+.empty-msg {
+    text-align: center;
+    color: var(--text-2);
+    padding: 50px 20px;
+}
+
+.empty-msg[data-tone="error"] {
+    color: var(--red);
+}

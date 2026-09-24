@@ -42,14 +42,14 @@ def load_saved():
         return len(_WELLS)
 
 
-def add(database_name, ip_address, rules):
+def add(database_name, ip_address, rules, region=""):
     """
     Save a well and put it in the registry.
 
     The write happens first: a well the agent picks up but that is not on disk
     would vanish at the next restart with no sign of why.
     """
-    record = well_rules.save(database_name, ip_address, rules)
+    record = well_rules.save(database_name, ip_address, rules, region)
 
     with _LOCK:
         _WELLS[database_name] = record
@@ -104,6 +104,7 @@ def summaries():
             name: {
                 "database_name": record["database_name"],
                 "ip_address": record["ip_address"],
+                "region": record.get("region", ""),
                 "activity": _ACTIVITY.get(name),
             }
             for name, record in _WELLS.items()

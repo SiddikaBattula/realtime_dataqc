@@ -36,6 +36,101 @@ The rig databases only answer inside the company network.
 - A well name that is already monitored can't be added again. Use its pencil.
 - **Stopping a well deletes its rules** (`data/wells/<well>.json`).
 
+## Email digest
+
+Every 10 minutes the alerts raised in that time are emailed to the people
+responsible for each base region. A window with nothing in it sends nothing.
+
+All of it lives in `mailer/`, except the settings, which are in `config.py`
+with everything else configurable:
+
+| | |
+|---|---|
+| `config.py` | `.env` settings **and** `data/email_config.json` — who each region emails |
+| `mailer/digest.py` | which alerts, grouped how, worded how |
+| `mailer/sender.py` | SMTP, and nothing else |
+| `mailer/agent.py` | `EmailAgent` — the thread that decides when |
+
+Not named `email/`. Python's own standard library has a package of that name,
+and a folder called `email/` beside `main.py` is found first — which breaks
+`smtplib`, whose first line is `import email.utils`.
+
+`data/email_config.json` is the region, and under it whoever should be told
+about that base:
+
+```json
+{
+  "mumbai": {
+    "base_head":        "someone@ofiindia.com",
+    "operational_head": "someone.else@ofiindia.com"
+  },
+  "pune": { "base_head": "another@ofiindia.com" }
+}
+```
+
+The roles are not fixed — add `"drilling_engineer"` to a region and they are
+emailed too, with nothing in any file to change. A role left blank is someone
+not appointed yet and is simply not written to; a region where nobody has an
+address is refused. One mailbox holding two roles is addressed once, not sent
+the same email twice.
+
+Three things to set up, in this order:
+
+1. **.env** — `EMAIL_ENABLED=true`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USE_TLS`
+   or `SMTP_USE_SSL`, `SMTP_FROM`, and unless the relay is open,
+   `SMTP_USERNAME` / `SMTP_PASSWORD`. Restart. Until this is done the tab
+   below says so and nothing is sent.
+2. **Settings → Email recipients** — one row per base region, each with its
+   base coordinator and operational head. **Send test** proves the settings
+   before waiting ten minutes to find out the password is wrong.
+3. **Base region** on each well, beside its IP address. It is the name typed
+   here that is looked up in the list above, so the box offers the regions
+   already saved — a well whose region is spelt differently reaches nobody.
+
+A well with no region is monitored exactly as before and appears in no email.
+The log says which wells are in that state, and which regions have wells but
+no entry.
+
+| Setting | Default | |
+|---|---|---|
+| `EMAIL_ENABLED` | false | Nothing is sent unless this is on |
+| `EMAIL_INTERVAL_SECONDS` | 600 | Seconds between passes |
+| `SMTP_USE_TLS` | true | STARTTLS, for port 587 |
+| `SMTP_USE_SSL` | false | TLS from the first byte, for port 465 |
+
+### How the window works
+
+Each region's window runs from **its own last successful send** up to now, not
+from "now minus ten minutes". Two things follow:
+
+- A pass that is late, or missed because the service was restarting, leaves no
+  gap — the next window just starts where the last one ended and is longer.
+- A send that fails does not move that region's watermark, so the window stays
+  owed and grows until one gets through. A mail server being down delays these
+  alerts; it never drops them.
+
+Per region rather than one watermark for everything, so one region's mail
+server refusing does not hold back the others. Where each has got to is in
+`output/email_state.json`, so a restart resumes instead of skipping whatever
+was raised while it was down. After a long outage the window is clamped to
+`ALERT_RETENTION_HOURS`, since older alerts have already been swept out.
+
+### What is in one
+
+Alerts are grouped the way a card groups them, by the sentence with its
+numbers taken out. A problem standing for the whole window is written to the
+file once a second, so ten minutes of one stuck hookload is ~600 lines; sent
+as-is it would bury everything else. The count is what carries that:
+
+```
+DK-1233
+-------
+  Please check for data Trans. Hookload has remained unchanged for 30 seconds
+      14:20:03 to 14:29:58   raised 612x
+  ROP increased by 80.00%, BD:2499.9406m
+      14:24:11   raised 1x
+```
+
 ## Activity
 
 ```
@@ -249,4 +344,36 @@ Never commit `.env`. It holds the real password.
 | `well_registry.py` | The list of monitored wells |
 | `config_api.py` | The API and the dashboard server |
 | `config.py`, `logger.py` | Settings from `.env`, and logging to `logs/` |
-| `frontend/` | The dashboard (HTML, CSS, JS) |
+
+Two pages in `frontend/`, each with its own HTML, CSS and JavaScript:
+
+| File | Job |
+|---|---|
+| `index.html`, `style.css`, `app.js` | The dashboard - the well cards and the settings form |
+| `logs.html`, `logs.css`, `logs.js` | One well's whole alert history, opened by **Show Logs** |
+| `shared.js` | What both pages need: where the API is, and how to read one alert |
+
+The log page stands on its own: it takes the well from its own query string
+(`/logs.html?well=<database_name>`), fetches its own alerts and polls for more,
+so it can be reloaded, bookmarked, or left open on a second screen.
+
+Neither page has a port or a hostname written into it. They are served by
+`config_api.py` alongside the endpoints they call, so a relative path already
+points at the right place - change `CONFIG_API_PORT` in `.env` and both pages
+follow it, as do a reverse proxy, https and any hostname.
+
+Working on the page from somewhere else - `python -m http.server 5500` inside
+`frontend/`, VS Code Live Server, or opening the file directly - is the one
+case where that is not true. Such a server hands back `index.html` and then
+answers `GET /wells` with its own 404, so the page checks at load which kind of
+origin it came from: it asks for `/health`, and falls back to `DEV_API_PORT` in
+`shared.js` (8000) only when something answers that is not the API. A
+deployment on any port is found by that check and never reads the constant.
+
+To point the page at a rig on another machine, name the API on the URL. It is
+read per load and never stored:
+
+```
+http://127.0.0.1:5500/index.html?api=http://10.0.0.5:8000
+```
+

@@ -2,7 +2,7 @@
   DataQC dashboard.
 
   Served by config_api.py, normally from the same origin as the endpoints it
-  calls - see API_BASE below for the case where it is not.
+  calls - see API_BASE in shared.js for the case where it is not.
 
   It talks to these:
       GET    /rules/template            what a new well's form is filled with
@@ -26,31 +26,12 @@
 'use strict';
 
 /*
-  Where the API is.
-
-  Served by config_api.py - open http://localhost:8000 - the page and the
-  endpoints share an origin and a relative path just works.
-
-  Served from a separate static server while working on the page
-  ("python -m http.server 5500", VS Code Live Server) they do not share one.
-  That server has no /wells, so every call 404s and POST comes back 501. When
-  the page is not on the API's own port, calls are pointed back at it.
-
-  Change API_PORT here if you change CONFIG_API_PORT in .env.
+  Where the API is and how to read one alert - API_BASE, api(), parseAlert(),
+  classify(), escapeHtml() - live in shared.js, which index.html loads before
+  this file. logs.html loads the same one, so the two pages cannot drift into
+  disagreeing about what an alert says or which port to ask. Everything below
+  is the dashboard's alone.
 */
-const API_PORT = '8000';
-
-const API_BASE = (() => {
-    if (location.protocol === 'file:') {
-        return 'http://localhost:' + API_PORT;
-    }
-
-    if (location.port === API_PORT || location.port === '') {
-        return '';
-    }
-
-    return location.protocol + '//' + location.hostname + ':' + API_PORT;
-})();
 
 /*
   Every timing and limit below is set in .env and served by GET /settings, so
@@ -126,6 +107,8 @@ const el = {
     form: document.getElementById('add-well-form'),
     dbName: document.getElementById('database_name'),
     ipAddress: document.getElementById('ip_address'),
+    region: document.getElementById('region'),
+    regionField: document.getElementById('region-field'),
     submit: document.getElementById('add-submit'),
     modalTitle: document.getElementById('modal-title'),
     modalError: document.getElementById('modal-error'),
@@ -171,76 +154,6 @@ let polling = null;
 // Talking to the API
 // ---------------------------------------------------------------------------
 
-async function api(path, options) {
-    const response = await fetch(API_BASE + path, {
-        headers: { 'Content-Type': 'application/json' },
-        ...options,
-    });
-
-    let body = null;
-
-    try {
-        body = await response.json();
-    } catch (err) {
-        // A 500 from the server can come back as HTML; the status is enough.
-    }
-
-    if (!response.ok) {
-        const detail = body && body.detail ? body.detail : 'Request failed';
-        throw new Error(typeof detail === 'string' ? detail : 'Request failed');
-    }
-
-    return body;
-}
-
-// ---------------------------------------------------------------------------
-// Reading an alert
-//
-// The agent writes them as "[11-09-26 17-20-28] SPP dropped by 4.10% where
-// BD-104.5" - a timestamp, then the sentence.
-// ---------------------------------------------------------------------------
-
-const ALERT_SHAPE = /^\[([^\]]*)\]\s*([\s\S]*)$/;
-
-function parseAlert(raw) {
-    const match = ALERT_SHAPE.exec(String(raw));
-
-    if (!match) {
-        return { time: '', message: String(raw) };
-    }
-
-    // "11-09-26 17-20-28" -> "17:20:28"
-    const clock = match[1].split(' ')[1] || '';
-
-    return { time: clock.replace(/-/g, ':'), message: match[2] };
-}
-
-/*
-  How loudly to say it.
-
-  The row shows the agent's own sentence and nothing else, so this only picks
-  the colour of the row's edge - enough to scan a card without reading it.
-*/
-const KINDS = [
-    [/Please check for data Trans/i, 'critical'],
-    [/increased by/i, 'critical'],
-    [/Bit Depth jump by/i, 'critical'],
-    // TA and TG may carry display names, so only the shape is matched.
-    [/Cannot determine activity/i, 'critical'],
-    [/Unknown activity/i, 'critical'],
-    [/remained unchanged/i, 'warn'],
-];
-
-function classify(message) {
-    for (const [pattern, tone] of KINDS) {
-        if (pattern.test(message)) {
-            return { tone };
-        }
-    }
-
-    // Everything left is a change the agent noticed: SPP, SPM or ROP moving.
-    return { tone: 'info' };
-}
 
 /*
   The card is a log: every alert on its own line, newest first, nothing merged
@@ -426,17 +339,32 @@ function initResize(card, name) {
 // Drawing
 // ---------------------------------------------------------------------------
 
+/*
+  What the rig is doing, next to the well's name.
+
+  One function rather than the same two lines in three places: the card is
+  built once and then updated in place, and a poll that could not fetch a
+  well's alerts still knows its activity - so all three paths have to write
+  this the same way or the card ends up saying nothing.
+
+  Blank while it is null, which is what /wells sends when the rig cannot be
+  reached. A stale "(DRILLING)" there would say the bit is on bottom when in
+  fact nobody can see it.
+*/
+function showActivity(card, activity) {
+    card.querySelector('.well-activity').textContent =
+        activity ? `(${activity})` : '';
+}
+
+
 function buildCard(well) {
     const card = el.tplWell.content.firstElementChild.cloneNode(true);
 
     const name = card.querySelector('.well-name');
-    const activity = card.querySelector('.well-activity');
 
     name.textContent = well.database_name;
 
-    activity.textContent = well.activity
-        ? `(${well.activity})`
-        : '';
+    showActivity(card, well.activity);
 
     name.title = well.database_name + '  ' + well.ip_address;
 
@@ -510,12 +438,8 @@ function renderAlerts(list, alerts) {
 
 
 function updateCard(card, state, alerts) {
-    const activityNode = card.querySelector('.well-activity');
+    showActivity(card, state.activity);
 
-    activityNode.textContent =
-        state.activity
-            ? `(${state.activity})`
-            : '';
     const list = card.querySelector('.alerts');
     const blank = card.querySelector('.well-blank-text');
 
@@ -612,8 +536,18 @@ async function refresh() {
             return;
         }
 
+        // The activity comes from /wells, not from the alerts call, so it is
+        // known even on a pass where a well's alerts could not be read. It was
+        // never being copied onto the card's state, so updateCard() below read
+        // undefined every time and blanked the name - the activity appeared
+        // for the moment the card was built and then never again.
+        state.activity = wells[name].activity;
+
         if (results[index] === null) {
-            return;  // keep existing data
+            // Alerts could not be fetched this pass. Keep the rows already
+            // drawn, but the activity did arrive and should not go stale.
+            showActivity(state.card, state.activity);
+            return;
         }
 
         updateCard(
@@ -1151,6 +1085,7 @@ function showTab(tab) {
 
     el.form.hidden = tab !== 'well';
     el.displayNamesForm.hidden = tab !== 'names';
+    emailEl.form.hidden = tab !== 'email';
 
     if (tab === 'well' && !editing) {
         requestAnimationFrame(() => el.dbName.focus());
@@ -1194,10 +1129,18 @@ async function openModal(name) {
 
     el.modalTitle.textContent = editing ? 'Edit ' + editing : 'Settings';
     el.submit.textContent = editing ? 'Save rules' : 'Start monitoring';
-    // Editing saves the rules only (PUT /wells/{name}/rules keeps the address),
-    // so neither box can be changed - an edited IP would be silently dropped.
+
+    // The name is what the well's file is called and what its agent is keyed
+    // on, so it cannot change. The address can: PUT /wells/{name} saves it
+    // beside the rules, so an edited IP is kept rather than silently dropped
+    // the way it used to be.
     el.dbName.disabled = Boolean(editing);
-    el.ipAddress.disabled = Boolean(editing);
+
+    // The base region is a Settings field only. Under a well's pencil the
+    // form is about how that rig is checked, and which base it belongs to is
+    // not one of those things - it decides who gets emailed, which is set
+    // where the well is added.
+    el.regionField.hidden = Boolean(editing);
 
     el.modal.hidden = false;
 
@@ -1211,6 +1154,7 @@ async function openModal(name) {
         } else {
             el.dbName.value = '';
             el.ipAddress.value = '';
+            el.region.value = '';
             draft = await getTemplate();
         }
 
@@ -1234,6 +1178,11 @@ async function openModal(name) {
     } catch (err) {
         showNamesError('Could not load the display names: ' + err.message);
     }
+
+    // Also separately, and also only in Settings. Loading it here rather than
+    // when its tab is clicked is what fills the region datalist before the
+    // well form is typed into, which is the whole point of the datalist.
+    loadEmailRecipients();
 }
 
 function closeModal() {
@@ -1264,6 +1213,10 @@ el.form.addEventListener('submit', async (event) => {
     const database_name = el.dbName.value.trim();
     const ip_address = el.ipAddress.value.trim();
 
+    // Optional: a well with no region is monitored exactly as before and
+    // simply appears in no digest.
+    const region = el.region.value.trim();
+
     if (!database_name || !ip_address) {
         showError('A database name and an IP address are both needed.');
         return;
@@ -1286,6 +1239,16 @@ el.form.addEventListener('submit', async (event) => {
 
     try {
         if (editing) {
+            // Two calls, because they are two different things: the address
+            // is the well's detail, the thresholds are its rules. No region
+            // is sent - it is not on this form, and PUT /wells/{name} keeps
+            // whatever is stored for any field left out, so an edit here
+            // cannot blank the base a rig is already on.
+            await api('/wells/' + encodeURIComponent(editing), {
+                method: 'PUT',
+                body: JSON.stringify({ ip_address }),
+            });
+
             await api('/wells/' + encodeURIComponent(editing) + '/rules', {
                 method: 'PUT',
                 body: JSON.stringify(draft),
@@ -1295,7 +1258,7 @@ el.form.addEventListener('submit', async (event) => {
         } else {
             await api('/wells', {
                 method: 'POST',
-                body: JSON.stringify({ database_name, ip_address, rules: draft }),
+                body: JSON.stringify({ database_name, ip_address, region, rules: draft }),
             });
 
             toast(database_name + ' added — the agent starts within a few seconds');
@@ -1325,356 +1288,55 @@ el.resetDefaults.addEventListener('click', async () => {
     }
 });
 
-function escapeHtml(text) {
-    return String(text)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-}
-
 // ---------------------------------------------------------------------------
-// Show Logs — every alert a well has ever raised, in its own tab
+// Show Logs - every alert a well has ever raised, in its own tab
 //
-// GET /alerts/all/{database_name}. Three things this has to do that a plain
-// dump of the file does not:
+// The tab is logs.html, and it is a page in its own right: it reads the well
+// out of its own query string, fetches /alerts/all itself and polls for more
+// (see logs.js). All this does is open it.
 //
-//   - newest first, because the file is append-only and nobody wants to
-//     scroll to the bottom of 800 lines to see what just happened
-//   - one line per alert, not a bordered box each - a box per row is fine for
-//     a handful of alerts and unusable for hundreds
-//   - live: the tab stays open on a rig console for a shift, so it polls
-//     /alerts/all the same way the dashboard polls /wells, and prepends only
-//     what is new rather than redrawing everything
+// It used to build the whole document here and win.document.write() it into
+// the new tab. That worked until the tab was reloaded - a refresh throws the
+// written document away and asks the server for logs.html, which is a file
+// this page had never needed to be real. It was commented out from top to
+// bottom, so what came back rendered nothing and the tab went blank.
 //
 // The window is opened synchronously, inside the click itself - opening it
 // after an `await` resolves puts it outside the gesture that triggered the
 // click, and browsers treat that as an unrequested popup and block it.
 // ---------------------------------------------------------------------------
 
-let logsWin = null;        // the open tab, or null
-let logsWellName = null;   // which well it is showing
-let logsKnownCount = null; // how many alerts it has already been sent
-let logsPollTimer = null;
-
-function stopLogsPoll() {
-    clearTimeout(logsPollTimer);
-    logsPollTimer = null;
-}
-
-/* One alert, as one dense line - time, then the agent's own sentence, tinted
-   by classify() the same way a well card's rows are. */
-function logRowHtml(raw) {
-    const text = String(raw);
-    const { time, message } = parseAlert(text);
-    const { tone } = classify(message);
-
-    return `<div class="row" data-tone="${tone}">`
-        + `<span class="time">${escapeHtml(time || '—')}</span>`
-        + `<span class="msg">${escapeHtml(message)}</span>`
-        + `</div>`;
-}
-
-function logsPageHtml(name, alerts) {
-    // Newest first from the start, so the poll below only ever has to
-    // *prepend* - the row order never has to be recomputed.
-    const rowsHtml = [...alerts].reverse().map(logRowHtml).join('');
-
-    return `
-    <html>
-    <head>
-        <title>${escapeHtml(name)} — Alert Log</title>
-        <meta charset="UTF-8">
-        <style>
-            :root {
-                --bg: #0B0D14; --panel: #11141F; --border: #232838;
-                --text: #E7EAF5; --text-2: #8A91AC; --text-3: #565D78;
-                --amber: #FFB224; --amber-bg: rgba(255,178,36,.08);
-                --red: #FF4D6A; --red-bg: rgba(255,77,106,.09);
-                --blue: #3D9EFF;
-            }
-            * { box-sizing: border-box; }
-            body {
-                margin: 0; background: var(--bg); color: var(--text);
-                font: 13px/1.4 -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-            }
-            header {
-                position: sticky; top: 0; z-index: 5;
-                background: rgba(11,13,20,.92); backdrop-filter: blur(8px);
-                border-bottom: 1px solid var(--border);
-                padding: 16px 20px 12px;
-            }
-            h1 { margin: 0 0 10px; font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
-            h1 .count { color: var(--text-2); font-weight: 500; font-size: 12.5px; }
-          
-            @keyframes pulse { 50% { opacity: .35; } }
-            .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-            .toolbar input {
-                flex: 1; max-width: 320px; padding: 7px 10px;
-                border: 1px solid var(--border); border-radius: 6px;
-                font: 12.5px inherit; background: var(--panel); color: var(--text); outline: none;
-            }
-            .toolbar input:focus { border-color: var(--blue); }
-            .toolbar .chip {
-                padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px;
-                font-size: 11px; font-weight: 600; color: var(--text-2);
-                cursor: pointer; background: var(--panel); user-select: none;
-            }
-            .toolbar .chip[data-active="1"] { border-color: var(--blue); color: var(--blue); }
-            main { width: 100%; padding: 4px 0 40px; }
-
-            /* Log rows, not cards: one hairline between them, no border, no
-               radius, no shadow - the tone is a 2px flag on the left edge and
-               nothing else, so hundreds of rows read as a log, not a stack of
-               tiles. */
-            .row {
-                position: relative;
-                display: flex;
-                gap: 14px;
-                align-items: baseline;
-                padding: 3px 20px;
-                border-bottom: 1px solid rgba(35,40,56,.55);
-            }
-            .row::before {
-                content: "";
-                position: absolute;
-                left: 0;
-                top: 0;
-                bottom: 0;
-                width: 4px;
-            }
-            .row[data-tone="critical"]::before {
-                background: var(--red);
-            }
-
-            .row[data-tone="warn"]::before {
-                background: var(--amber);
-            }
-
-            .row[data-tone="info"]::before {
-                background: var(--blue);
-            }
-            .row[data-tone="critical"] { border-left-color: var(--red); background: var(--red-bg); }
-            .row[data-tone="warn"] { border-left-color: var(--amber); background: var(--amber-bg); }
-            .row[data-tone="info"] { border-left-color: var(--blue); }
-            .row.is-new { animation: flash .9s ease; }
-            @keyframes flash { from { background: rgba(61,158,255,.22); } }
-
-           .time {
-                flex: none;
-                font-family: "Roboto", sans-serif;
-                font-size: 14px;
-                font-weight: 600;
-                color: var(--text-3);
-                min-width: 100px;
-                padding-left: 16px;
-            }
-
-            .msg {
-                font-family: "Roboto", sans-serif;
-                font-size: 14px;
-                font-weight: 500;
-                color: #D6DAEA;
-                word-break: break-word;
-            }
-            .row[data-tone="critical"] .time { color: #FF8FA3; }
-            .row[data-tone="critical"] .msg { color: #FFE1E7; }
-            .row[data-tone="warn"] .time { color: #FFCB70; }
-            .empty-msg { text-align: center; color: var(--text-2); padding: 50px 20px; }
-        </style>
-    </head>
-    <body>
-        <header>
-            <h1>${escapeHtml(name)}</h1>
-            <div class="toolbar">
-                <input id="filter" type="text" placeholder="13:50 or 13:50-13:55">
-                <span class="chip" data-tone="critical">Critical</span>
-                <span class="chip" data-tone="warn">Warning</span>
-                <span class="chip" data-tone="info">Info</span>
-            </div>
-        </header>
-        <main id="list">
-            ${rowsHtml || '<p class="empty-msg">No alerts recorded for this well.</p>'}
-        </main>
-        <script>
-            const listEl = document.getElementById('list');
-            const input = document.getElementById('filter');
-            const chips = [...document.querySelectorAll('.chip')];
-            const active = new Set();
-
-            function apply() {
-                const q = input.value.trim();
-
-                const rows = [...listEl.querySelectorAll('.row')];
-
-                let startTime = null;
-                let endTime = null;
-
-                if (q.includes('-')) {
-                    const parts = q.split('-');
-
-                    startTime = parts[0].trim();
-                    endTime = parts[1].trim();
-                }
-
-                for (const row of rows) {
-
-                    const timeText =
-                        (row.querySelector('.time')?.textContent || '').trim();
-
-                    let matchesText = true;
-
-                    if (startTime && endTime) {
-
-                        matchesText =
-                            timeText >= startTime &&
-                            timeText <= endTime;
-
-                    } else if (q) {
-
-                        matchesText =
-                            timeText.startsWith(q);
-                    }
-
-                    const matchesTone =
-                        active.size === 0 ||
-                        active.has(row.dataset.tone);
-
-                    row.style.display =
-                        (matchesText && matchesTone)
-                            ? ''
-                            : 'none';
-                }
-            }
-
-            input.addEventListener('input', apply);
-
-            for (const chip of chips) {
-                chip.addEventListener('click', () => {
-                    const tone = chip.dataset.tone;
-                    if (active.has(tone)) {
-                        active.delete(tone);
-                        chip.removeAttribute('data-active');
-                    } else {
-                        active.add(tone);
-                        chip.dataset.active = '1';
-                    }
-                    apply();
-                });
-            }
-
-            // Called from the dashboard tab when a poll finds new alerts -
-            // prepended, since rows are already newest-first.
-            window.insertLogRows = function (html) {
-                const empty = listEl.querySelector('.empty-msg');
-                if (empty) empty.remove();
-
-                listEl.insertAdjacentHTML('afterbegin', html);
-
-                for (const row of [...listEl.children].slice(0, html.split('<div').length - 1)) {
-                    row.classList.add('is-new');
-                }
-
-                apply();
-            };
-        </script>
-    </body>
-    </html>`;
-}
-
-/* Polls /alerts/all for the well the log tab is showing, and sends only the
-   rows that were not there last time - the same "one thing in flight, no
-   pile-up" shape as startPolling() uses for the dashboard itself. */
-function pollLogs() {
-    if (!logsWin || logsWin.closed) {
-        stopLogsPoll();
-        logsWin = null;
-        return;
-    }
-
-    api('/alerts/all/' + encodeURIComponent(logsWellName))
-        .then((data) => {
-            const alerts = data.alerts || [];
-
-            if (alerts.length > logsKnownCount) {
-                const fresh = alerts.slice(logsKnownCount);
-                logsKnownCount = alerts.length;
-
-                // Newest first, same as the initial render.
-                const html = [...fresh].reverse().map(logRowHtml).join('');
-
-                if (typeof logsWin.insertLogRows === 'function') {
-                    logsWin.insertLogRows(html);
-                }
-            }
-        })
-        .catch(() => {
-            // A miss here is quiet - the tab just does not update until the
-            // next poll succeeds, same as the main dashboard's own polling.
-        })
-        .finally(() => {
-            if (logsWin && !logsWin.closed) {
-                logsPollTimer = setTimeout(pollLogs, S.pollMs);
-            } else {
-                stopLogsPoll();
-                logsWin = null;
-            }
-        });
-}
-
 el.showLogs.addEventListener('click', () => {
     if (!editing) {
         return;
     }
 
-    const name = editing;
+    // Relative, not "/logs.html": the page is then found next to this one
+    // wherever it is served from - the API's own root, a static server's
+    // sub-path, or a file:// directory.
+    //
+    // ?api= is carried over when this page was opened with it, so the log tab
+    // asks the same API rather than its own origin. Normally there is none and
+    // both pages just use a relative path - see API_BASE in shared.js.
+    let url = 'logs.html?well=' + encodeURIComponent(editing);
 
-    stopLogsPoll();
+    if (API_PARAM) {
+        url += '&api=' + encodeURIComponent(API_PARAM);
+    }
 
-    // Reuse the tab if it is already open on this same well, instead of
-    // stacking up a new one every click.
-    if (logsWin && !logsWin.closed && logsWellName === name) {
-        logsWin.focus();
-        logsPollTimer = setTimeout(pollLogs, S.pollMs);
+    // Named after the well rather than '_blank', so clicking Show Logs twice
+    // for the same well focuses the tab already open on it instead of stacking
+    // up a new one, while two different wells still get a tab each.
+    const tab = window.open(url, 'dataqc-logs-' + editing);
+
+    if (!tab) {
+        toast('Your browser blocked the popup - allow popups for this site and try again.', 'error');
         return;
     }
 
-    const win = window.open(
-        '/logs.html?well=' + encodeURIComponent(name),
-        '_blank'
-    );
-
-    if (!win) {
-        toast('Your browser blocked the popup — allow popups for this site and try again.', 'error');
-        return;
-    }
-
-    win.document.write(
-        '<body style="font-family: "Roboto", sans-serif;background:#0B0D14;color:#E7EAF5;padding:24px;"><p>Loading…</p></body>',
-    );
-
-    api('/alerts/all/' + encodeURIComponent(name))
-        .then((data) => {
-            const alerts = data.alerts || [];
-
-            logsWin = win;
-            logsWellName = name;
-            logsKnownCount = alerts.length;
-
-            win.document.open();
-            win.document.write(logsPageHtml(name, alerts));
-            win.document.close();
-
-            logsPollTimer = setTimeout(pollLogs, S.pollMs);
-        })
-        .catch((err) => {
-            win.document.open();
-            win.document.write(
-                `<p style="font-family: "Roboto", sans-serif;color:#FF4D6A;padding:24px;">Could not load logs: ${escapeHtml(err.message)}</p>`,
-            );
-            win.document.close();
-            toast('Could not load logs: ' + err.message, 'error');
-        });
+    tab.focus();
 });
+
 
 // ---------------------------------------------------------------------------
 // Opening and closing

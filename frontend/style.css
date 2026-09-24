@@ -362,7 +362,7 @@ body::before {
     position: relative;
     display: flex;
     flex-direction: column;
-    border: 2px solid var(--border-soft);
+    border: 3px solid var(--border-soft);
     border-radius: var(--radius);
     background: linear-gradient(165deg, rgba(31, 36, 53, .85), var(--surface) 58%);
     box-shadow: var(--shadow);
@@ -622,12 +622,24 @@ body::before {
     word-break: break-word;
 }
 
+/* .alert[data-tone="transmission"] {
+    background: #f4df98;
+    border-left: 5px solid #ff8f00;
+    color: #111 !important;
+    font-weight: 700;
+}
+
+.alert[data-tone="transmission"] .alert-time,
+.alert[data-tone="transmission"] .alert-msg {
+    color: #111 !important;
+} */
+
 .alert[data-tone="critical"] {
     background: rgba(255, 59, 92, 0.12);
     border-left: 4px solid #ff3b5c;
     border-top: 1px solid rgba(255, 59, 92, 0.25);
     border-bottom: 1px solid rgba(255, 59, 92, 0.25);
-    box-shadow: 0 0 12px rgba(255, 59, 92, 0.25);
+    box-shadow: 0 0 12px rgba(255, 59, 92, 0.12);
 }
 
 .alert[data-tone="critical"] .alert-time {
@@ -750,8 +762,8 @@ body::before {
     bottom: 3px;
     width: 7px;
     height: 7px;
-    border-right: 2px solid var(--text-3);
-    border-bottom: 2px solid var(--text-3);
+    border-right: 1px solid var(--text-3);
+    border-bottom: 1px solid var(--text-3);
     border-radius: 0 0 3px 0;
     opacity: .45;
     transition: opacity .14s, border-color .14s;
@@ -789,7 +801,7 @@ body[data-resizing] {
     text-align: center;
     gap: 5px;
     padding: 76px 20px;
-    border: 2px solid var(--border-soft);
+    border: 1px solid var(--border-soft);
     border-radius: var(--radius);
     background: linear-gradient(165deg, rgba(31, 36, 53, .55), rgba(17, 20, 31, .8));
 }
@@ -866,7 +878,7 @@ body[data-resizing] {
     min-height: 0;
     /* Clips the scrolling body to the rounded corners. */
     overflow: hidden;
-    border: 2px solid var(--border);
+    border: 1px solid var(--border);
     border-radius: 13px;
     background: linear-gradient(165deg, var(--surface-2), var(--surface));
     box-shadow: 0 24px 60px -18px rgba(0, 0, 0, .9), 0 0 40px -20px rgba(124, 107, 255, .5);
@@ -900,14 +912,21 @@ body[data-resizing] {
     justify-content: space-between;
     gap: 12px;
     padding: 15px 11px 15px 17px;
-    border-bottom: 2px solid var(--border-soft);
+    border-bottom: 1px solid var(--border-soft);
 }
 
 .modal-head h2 {
     margin: 0;
-    font-size: 25px;
+    font-size: 18px;
     font-weight: 600;
     letter-spacing: -.01em;
+
+    /* "Edit MNDWO181HDB_1(M" is a long title next to the tabs and the close
+       button. Kept on one line and trimmed rather than wrapping, which would
+       make the header taller and push the form down. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Settings' two tabs. Neutral on purpose: colour on this page means status. */
@@ -919,14 +938,6 @@ body[data-resizing] {
 
 .modal-tabs[hidden],
 .modal-form[hidden] {
-    display: none;
-}
-
-/* .btn sets display: inline-flex, which - being an author style - outranks
-   the browser's own [hidden] { display: none } rule. Without this, a button
-   with the hidden attribute (like #show-logs outside of editing a well)
-   stays visible. */
-.btn[hidden] {
     display: none;
 }
 
@@ -1051,7 +1062,7 @@ body[data-resizing] {
 .modal-body::-webkit-scrollbar-thumb {
     background: #2E3550;
     border-radius: 5px;
-    border: 3px solid transparent;
+    border: 1px solid transparent;
     background-clip: content-box;
 }
 
@@ -1195,7 +1206,7 @@ body[data-resizing] {
 .table-scroll::-webkit-scrollbar-thumb {
     background: #2E3550;
     border-radius: 4px;
-    border: 2px solid transparent;
+    border: 1px solid transparent;
     background-clip: content-box;
 }
 
@@ -1365,7 +1376,7 @@ body[data-resizing] {
     gap: 9px;
     padding: 10px 15px;
     border: 1px solid var(--border);
-    border-left: 2px solid var(--green);
+    border-left: 1px solid var(--green);
     border-radius: var(--radius-sm);
     background: var(--surface-2);
     box-shadow: 0 10px 30px -12px rgba(0, 0, 0, .9);
@@ -1445,4 +1456,119 @@ body[data-resizing] {
         animation: none !important;
         transition: none !important;
     }
+}
+/* ---------------------------------------------------------------------------
+   Email recipients
+
+   A block per region with its people indented under it, rather than one flat
+   table: the roles are not fixed, so a region can hold two people or five, and
+   a table with a column per role could not show that.
+   --------------------------------------------------------------------------- */
+
+.email-region {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    background: var(--surface-2);
+}
+
+.email-region-head {
+    display: grid;
+    grid-template-columns: auto minmax(140px, 1fr) 32px;
+    gap: 10px;
+    align-items: center;
+}
+
+.email-region-head span {
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--text-2);
+}
+
+/* Indented, and hung off a rule, so it reads as belonging to the region above
+   it rather than as the next thing down the page. */
+.email-people {
+    margin: 12px 0 0 2px;
+    padding-left: 12px;
+    border-left: 2px solid var(--border);
+}
+
+.email-person {
+    display: grid;
+    grid-template-columns: minmax(110px, 0.8fr) minmax(170px, 1.4fr) 32px;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 7px;
+}
+
+.email-head span {
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--text-3);
+}
+
+.email-region input,
+.email-person input {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 12.5px;
+    outline: none;
+    min-width: 0;
+}
+
+.email-region input:focus,
+.email-person input:focus {
+    border-color: var(--accent);
+}
+
+.btn-small {
+    padding: 5px 10px;
+    font-size: 11px;
+}
+
+.email-remove {
+    width: 26px;
+    height: 26px;
+    font-size: 15px;
+    line-height: 1;
+    justify-self: center;
+}
+
+.email-empty {
+    margin: 0 0 12px;
+    font-size: 12px;
+    color: var(--text-3);
+}
+
+.modal-intro[data-tone="warn"] {
+    color: var(--amber);
+}
+
+
+/* ---------------------------------------------------------------------------
+   The last word on hidden.
+
+   [hidden] { display: none } comes from the browser's own stylesheet, and any
+   display set in this file beats it - so .btn being display:inline-flex and
+   .field being display:grid meant setting .hidden = true on one set the
+   attribute and changed nothing on screen. Show Logs sat in Settings with
+   hidden written on it, and the Base region box stayed under a well's pencil
+   after app.js had hidden it.
+
+   Catching each class as it comes up is what let both of those through, so
+   this says it once for everything. !important is what makes it hold against
+   a rule with more classes in it than this one has.
+   --------------------------------------------------------------------------- */
+
+[hidden] {
+    display: none !important;
 }

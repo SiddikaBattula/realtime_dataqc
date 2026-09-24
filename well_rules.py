@@ -100,6 +100,11 @@ def _read(path):
     if not isinstance(record, dict) or "rules" not in record:
         raise RuleFileError(f"{path.name} is not a well record")
 
+    # Saved before the base region existed. Blank is exactly right for it -
+    # nobody has said which base it is on - and setting it here means the
+    # form opens with an empty box rather than no box.
+    record.setdefault("region", "")
+
     rules = record["rules"]
 
     if isinstance(rules, dict):
@@ -136,7 +141,7 @@ def load_rules(path):
     return _read(path)["rules"]
 
 
-def save(database_name, ip_address, rules):
+def save(database_name, ip_address, rules, region=""):
     """
     Check the rules, then write the well's record.
 
@@ -160,6 +165,14 @@ def save(database_name, ip_address, rules):
     record = {
         "database_name": database_name,
         "ip_address": ip_address,
+
+        # Which base this rig is on, entered beside the IP address. It decides
+        # who the ten-minute digest goes to - data/email_config.json turns the
+        # name into two addresses - and nothing else reads it, so a well left
+        # without one is monitored exactly as before and simply appears in no
+        # email.
+        "region": str(region or "").strip(),
+
         "rules": rules,
     }
 

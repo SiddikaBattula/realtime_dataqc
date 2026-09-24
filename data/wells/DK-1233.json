@@ -1,6 +1,7 @@
 {
     "database_name": "DK-1233",
     "ip_address": "43.241.39.241",
+    "region": "mumbai",
     "rules": {
         "activity": {
             "DRILLING": {
@@ -290,8 +291,8 @@
                 "factor": 1
             }
         },
-        "drilling_criteria": 0.01,
-        "bd_threshold_drilling": 10,
-        "bd_threshold_non_drilling": 30
+        "drilling_criteria": 0.1,
+        "bd_threshold_drilling": 0.01,
+        "bd_threshold_non_drilling": 5
     }
 }

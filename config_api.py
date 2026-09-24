@@ -37,7 +37,14 @@ from pydantic import BaseModel, Field
 import rule_files
 import well_registry
 import well_rules
-from config import Config
+from config import (
+    Config,
+    EmailConfigError,
+    load_email_config,
+    save_email_config,
+)
+import mailer
+
 from validation_realtime import alert_raised_at
 from logger import setup_logging, get_logger
 from rule_files import RuleFileError
@@ -54,6 +61,16 @@ class WellRequest(BaseModel):
 
     database_name: str = Field(..., examples=["kj-16"])
     ip_address: str = Field(..., examples=["10.0.0.5"])
+
+    region: str = Field(
+        "",
+        examples=["Mehsana"],
+        description="The base region this rig is on. It decides who the "
+                    "ten-minute alert digest goes to - the two addresses "
+                    "listed against this name in GET /email/recipients. "
+                    "Leave it blank and the well is monitored as usual but "
+                    "appears in no email.",
+    )
 
     rules: Optional[dict] = Field(
         None,
@@ -272,16 +289,23 @@ def add_well(well: WellRequest):
     rules = well.rules if well.rules is not None else _guard(well_rules.template)
 
     record = _guard(
-        lambda: well_registry.add(well.database_name, well.ip_address, rules)
+        lambda: well_registry.add(
+            well.database_name, well.ip_address, rules, well.region
+        )
     )
 
-    log.info("Well added: %s (%s)", well.database_name, well.ip_address)
+    log.info(
+        "Well added: %s (%s)%s",
+        well.database_name, well.ip_address,
+        f" on {record['region']}" if record.get("region") else "",
+    )
 
     return {
         "message": f"{well.database_name} added",
         "status": "success",
         "database_name": record["database_name"],
         "ip_address": record["ip_address"],
+        "region": record.get("region", ""),
     }
 
 
@@ -339,8 +363,17 @@ def set_well_rules(
             detail=f"No well called '{database_name}' is being monitored",
         )
 
+    # The address and the region are carried over deliberately. add() writes
+    # the whole record, so anything not passed here is written as blank - and
+    # a well quietly losing its base region on an unrelated rules edit would
+    # drop it out of the digest with nothing to say why.
     saved = _guard(
-        lambda: well_registry.add(database_name, record["ip_address"], rules)
+        lambda: well_registry.add(
+            database_name,
+            record["ip_address"],
+            rules,
+            record.get("region", ""),
+        )
     )
 
     return {
@@ -348,6 +381,55 @@ def set_well_rules(
         "database_name": database_name,
         "note": "The agent reloads within about a second.",
         "rules": saved["rules"],
+    }
+
+
+@app.put("/wells/{database_name}", summary="Change a well's address or region")
+def set_well_details(
+    database_name: str,
+    details: dict = Body(
+        ...,
+        examples=[{"ip_address": "10.0.0.5", "region": "Mehsana"}],
+        description="ip_address and region. Either may be left out to keep "
+                    "what is stored.",
+    ),
+):
+    """
+    Change where a well is read from, or which base it belongs to.
+
+    Separate from its rules, because the two are edited for different reasons
+    and on different timescales: the thresholds change as a section is
+    drilled, the address and the base hardly ever. Its rules are carried
+    over untouched.
+    """
+    record = well_registry.get(database_name)
+
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No well called '{database_name}' is being monitored",
+        )
+
+    ip_address = str(details.get("ip_address", record["ip_address"])).strip()
+    region = str(details.get("region", record.get("region", ""))).strip()
+
+    saved = _guard(
+        lambda: well_registry.add(
+            database_name, ip_address, record["rules"], region
+        )
+    )
+
+    log.info(
+        "Well %s now %s%s",
+        database_name, saved["ip_address"],
+        f" on {saved['region']}" if saved.get("region") else " with no region",
+    )
+
+    return {
+        "status": "saved",
+        "database_name": database_name,
+        "ip_address": saved["ip_address"],
+        "region": saved.get("region", ""),
     }
 
 
@@ -666,6 +748,92 @@ def get_well_alerts(
         "total": len(alerts),
         "alerts": returned,
     }
+
+
+# ---------------------------------------------------------------------------
+# Who is emailed about each base region
+#
+# The list is edited here and read by the mailer thread. A well names its
+# base region beside its IP address; this says where that name sends mail.
+# ---------------------------------------------------------------------------
+
+@app.get("/email/config", summary="Who each base region's digest goes to")
+def get_email_config():
+    """
+    The saved regions, and whether there is a mail server to send with.
+
+    `configured` is false until EMAIL_ENABLED, SMTP_HOST and SMTP_FROM are all
+    set in .env. The dashboard says so rather than letting someone fill in
+    addresses that nothing will ever post to.
+    """
+    return {
+        "regions": load_email_config(),
+        "configured": mailer.configured(),
+        "interval_minutes": round(Config.EMAIL_INTERVAL_SECONDS / 60, 1),
+    }
+
+
+@app.put("/email/config", summary="Replace the regions and who they email")
+def set_email_config(
+    regions: dict = Body(
+        ...,
+        examples=[{
+            "mumbai": {
+                "base_head": "base.head@example.com",
+                "operational_head": "operational.head@example.com",
+            },
+        }],
+        description="The region is the key, and under it is whoever should be "
+                    "told about that base - as many people as it has, under "
+                    "whatever role names suit. Each region needs at least one "
+                    "address.",
+    ),
+):
+    """
+    Save every region at once.
+
+    Replaced rather than merged: the dashboard edits them all together, and a
+    merge would leave a region deleted in the form still on disk and still
+    being emailed.
+    """
+    try:
+        saved = save_email_config(regions)
+
+    except EmailConfigError as exc:
+        log.warning("Rejected email config: %s", exc)
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "status": "saved",
+        "count": len(saved),
+        "note": "Used by the next pass, within "
+                f"{round(Config.EMAIL_INTERVAL_SECONDS / 60, 1)} minutes.",
+        "regions": saved,
+    }
+
+
+@app.post("/email/test", summary="Send one test message now")
+def send_test_email(
+    body: dict = Body(..., examples=[{"to": "someone@example.com"}]),
+):
+    """
+    Prove the SMTP settings before waiting ten minutes to find out.
+
+    Whatever the mail server said comes back as the error, so a wrong password
+    or a blocked port is read here rather than dug out of the log.
+    """
+    to = str(body.get("to", "")).strip()
+
+    if not to:
+        raise HTTPException(status_code=400, detail="An address to send to is needed")
+
+    try:
+        mailer.send_test(to)
+
+    except mailer.EmailError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {"status": "sent", "to": to}
 
 
 @app.get("/settings", summary="The dashboard's settings, from .env")
