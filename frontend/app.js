@@ -12,6 +12,7 @@
       PUT    /wells/{name}/rules        change that well's rules
       DELETE /wells/{name}              stop monitoring one
       GET    /alerts/{name}             what that well's agent has raised
+      GET    /alerts/all/{name}         every alert that well has ever raised
       GET    /rules/display_name        what each parameter is called in alerts
       PUT    /rules/display_name        change those names, for every well
 
@@ -129,6 +130,7 @@ const el = {
     modalTitle: document.getElementById('modal-title'),
     modalError: document.getElementById('modal-error'),
     resetDefaults: document.getElementById('reset-defaults'),
+    showLogs: document.getElementById('show-logs'),
     toasts: document.getElementById('toasts'),
     tplWell: document.getElementById('tpl-well'),
     tplAlert: document.getElementById('tpl-alert'),
@@ -137,6 +139,28 @@ const el = {
     displayNamesSave: document.getElementById('display-names-save'),
     displayNamesError: document.getElementById('display-names-error'),
 };
+
+// The form's sections behave as an accordion: opening one closes whichever
+// else was open, instead of letting them all stack open together.
+function initAccordion(container) {
+    const groups = [...container.querySelectorAll('details.group')];
+
+    for (const details of groups) {
+        details.addEventListener('toggle', () => {
+            if (!details.open) {
+                return;
+            }
+
+            for (const other of groups) {
+                if (other !== details) {
+                    other.open = false;
+                }
+            }
+        });
+    }
+}
+
+initAccordion(el.form);
 
 // database_name -> { card, firstSeen, activity }
 const cards = new Map();
@@ -402,47 +426,6 @@ function initResize(card, name) {
 // Drawing
 // ---------------------------------------------------------------------------
 
-// function buildCard(well) {
-//     const card = el.tplWell.content.firstElementChild.cloneNode(true);
-
-//     const name = card.querySelector('.well-name');
-//     const activity = card.querySelector('.well-activity');
-
-//     name.textContent = well.database_name;
-
-//     activity.textContent =
-//         well.activity
-//             ? `(${well.activity})`
-//             : '';
-
-//     // The address is still worth having, just not worth a line of every card.
-//     name.title = well.database_name + '  ' + well.ip_address;
-
-//     card.querySelector('.well-edit').addEventListener(
-//         'click', () => openModal(well.database_name),
-//     );
-
-//     const remove = card.querySelector('.well-remove');
-
-//     // First click arms, second confirms. Avoids a browser dialog for something
-//     // that only stops monitoring and can be undone by adding the well back.
-//     remove.addEventListener('click', () => {
-//         if (remove.dataset.armed) {
-//             stopWell(well.database_name);
-//             return;
-//         }
-
-//         remove.dataset.armed = '1';
-//         setTimeout(() => delete remove.dataset.armed, 3000);
-//     });
-
-//     initResize(card, well.database_name);
-//     applySize(card, sizes[well.database_name]);
-
-//     return card;
-// }
-
-
 function buildCard(well) {
     const card = el.tplWell.content.firstElementChild.cloneNode(true);
 
@@ -617,20 +600,27 @@ async function refresh() {
                 + '&max_age_minutes=' + S.alertMaxAgeMin,
             )
                 .then((body) => listAlerts(body.alerts || []))
-                .catch(() => []),
+                .catch(() => null),
         ),
     );
 
     names.forEach((name, index) => {
+
         const state = cards.get(name);
 
         if (!state) {
             return;
         }
 
-        state.activity = wells[name].activity;
+        if (results[index] === null) {
+            return;  // keep existing data
+        }
 
-        updateCard(state.card, state, results[index]);
+        updateCard(
+            state.card,
+            state,
+            results[index]
+        );
     });
 
     if (el.statWells) {
@@ -687,7 +677,7 @@ const copy = (value) => JSON.parse(JSON.stringify(value));
 // Only the placeholder in the off-bottom margin box: the value itself comes
 // from the template the API serves (rule_files.DEFAULT_DRILLING_CRITERIA), so
 // the two cannot drift apart in a way that changes what is saved.
-const DEFAULT_DRILLING_CRITERIA = 0.1;
+const DEFAULT_DRILLING_CRITERIA = 0.05;
 
 async function getTemplate() {
     if (template === null) {
@@ -822,20 +812,33 @@ function renderDrillingCriteria() {
                 draft.drilling_criteria = numberOrBlank(value);
             },
             {
-                placeholder: '0.1',
+                placeholder: '0.05',
             },
         )
     );
 
     host.append(
         field(
-            'Bit Depth Threshold',
-            draft.bit_depth_threshold,
+            'Bit Depth Threshold Drilling',
+            draft.bd_threshold_drilling,
             (value) => {
-                draft.bit_depth_threshold = numberOrBlank(value);
+                draft.bd_threshold_drilling = numberOrBlank(value);
             },
             {
-                placeholder: '5',
+                placeholder: '10',
+            },
+        )
+    );
+
+    host.append(
+        field(
+            'Bit Depth Threshold Non Drilling',
+            draft.bd_threshold_non_drilling,
+            (value) => {
+                draft.bd_threshold_non_drilling = numberOrBlank(value);
+            },
+            {
+                placeholder: '100',
             },
         )
     );
@@ -1113,12 +1116,12 @@ el.displayNamesForm.addEventListener('submit', async (event) => {
 
     showNamesError('');
 
-    const blank = Object.keys(displayNames).filter((param) => !displayNames[param]);
+    const blankNames = Object.keys(displayNames).filter((param) => !displayNames[param]);
 
-    if (blank.length) {
+    if (blankNames.length) {
         showNamesError(
-            blank.join(', ') + (blank.length === 1 ? ' needs' : ' need') + ' a name. '
-            + 'To show a parameter as it is, type its own name (e.g. ' + blank[0] + ').',
+            blankNames.join(', ') + (blankNames.length === 1 ? ' needs' : ' need') + ' a name. '
+            + 'To show a parameter as it is, type its own name (e.g. ' + blankNames[0] + ').',
         );
         return;
     }
@@ -1148,6 +1151,10 @@ function showTab(tab) {
 
     el.form.hidden = tab !== 'well';
     el.displayNamesForm.hidden = tab !== 'names';
+
+    if (tab === 'well' && !editing) {
+        requestAnimationFrame(() => el.dbName.focus());
+    }
 }
 
 for (const button of el.modalTabs.querySelectorAll('.modal-tab')) {
@@ -1174,6 +1181,9 @@ function showError(message) {
 */
 async function openModal(name) {
     editing = name || null;
+
+    el.showLogs.hidden = !editing;
+
     showError('');
     showNamesError('');
 
@@ -1207,7 +1217,7 @@ async function openModal(name) {
         renderRules();
 
         if (!editing) {
-            el.dbName.focus();
+            requestAnimationFrame(() => el.dbName.focus());
         }
     } catch (err) {
         showError('Could not load the rules: ' + err.message);
@@ -1313,6 +1323,357 @@ el.resetDefaults.addEventListener('click', async () => {
     } catch (err) {
         showError(err.message);
     }
+});
+
+function escapeHtml(text) {
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+// ---------------------------------------------------------------------------
+// Show Logs — every alert a well has ever raised, in its own tab
+//
+// GET /alerts/all/{database_name}. Three things this has to do that a plain
+// dump of the file does not:
+//
+//   - newest first, because the file is append-only and nobody wants to
+//     scroll to the bottom of 800 lines to see what just happened
+//   - one line per alert, not a bordered box each - a box per row is fine for
+//     a handful of alerts and unusable for hundreds
+//   - live: the tab stays open on a rig console for a shift, so it polls
+//     /alerts/all the same way the dashboard polls /wells, and prepends only
+//     what is new rather than redrawing everything
+//
+// The window is opened synchronously, inside the click itself - opening it
+// after an `await` resolves puts it outside the gesture that triggered the
+// click, and browsers treat that as an unrequested popup and block it.
+// ---------------------------------------------------------------------------
+
+let logsWin = null;        // the open tab, or null
+let logsWellName = null;   // which well it is showing
+let logsKnownCount = null; // how many alerts it has already been sent
+let logsPollTimer = null;
+
+function stopLogsPoll() {
+    clearTimeout(logsPollTimer);
+    logsPollTimer = null;
+}
+
+/* One alert, as one dense line - time, then the agent's own sentence, tinted
+   by classify() the same way a well card's rows are. */
+function logRowHtml(raw) {
+    const text = String(raw);
+    const { time, message } = parseAlert(text);
+    const { tone } = classify(message);
+
+    return `<div class="row" data-tone="${tone}">`
+        + `<span class="time">${escapeHtml(time || '—')}</span>`
+        + `<span class="msg">${escapeHtml(message)}</span>`
+        + `</div>`;
+}
+
+function logsPageHtml(name, alerts) {
+    // Newest first from the start, so the poll below only ever has to
+    // *prepend* - the row order never has to be recomputed.
+    const rowsHtml = [...alerts].reverse().map(logRowHtml).join('');
+
+    return `
+    <html>
+    <head>
+        <title>${escapeHtml(name)} — Alert Log</title>
+        <meta charset="UTF-8">
+        <style>
+            :root {
+                --bg: #0B0D14; --panel: #11141F; --border: #232838;
+                --text: #E7EAF5; --text-2: #8A91AC; --text-3: #565D78;
+                --amber: #FFB224; --amber-bg: rgba(255,178,36,.08);
+                --red: #FF4D6A; --red-bg: rgba(255,77,106,.09);
+                --blue: #3D9EFF;
+            }
+            * { box-sizing: border-box; }
+            body {
+                margin: 0; background: var(--bg); color: var(--text);
+                font: 13px/1.4 -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+            }
+            header {
+                position: sticky; top: 0; z-index: 5;
+                background: rgba(11,13,20,.92); backdrop-filter: blur(8px);
+                border-bottom: 1px solid var(--border);
+                padding: 16px 20px 12px;
+            }
+            h1 { margin: 0 0 10px; font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
+            h1 .count { color: var(--text-2); font-weight: 500; font-size: 12.5px; }
+          
+            @keyframes pulse { 50% { opacity: .35; } }
+            .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+            .toolbar input {
+                flex: 1; max-width: 320px; padding: 7px 10px;
+                border: 1px solid var(--border); border-radius: 6px;
+                font: 12.5px inherit; background: var(--panel); color: var(--text); outline: none;
+            }
+            .toolbar input:focus { border-color: var(--blue); }
+            .toolbar .chip {
+                padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px;
+                font-size: 11px; font-weight: 600; color: var(--text-2);
+                cursor: pointer; background: var(--panel); user-select: none;
+            }
+            .toolbar .chip[data-active="1"] { border-color: var(--blue); color: var(--blue); }
+            main { width: 100%; padding: 4px 0 40px; }
+
+            /* Log rows, not cards: one hairline between them, no border, no
+               radius, no shadow - the tone is a 2px flag on the left edge and
+               nothing else, so hundreds of rows read as a log, not a stack of
+               tiles. */
+            .row {
+                position: relative;
+                display: flex;
+                gap: 14px;
+                align-items: baseline;
+                padding: 3px 20px;
+                border-bottom: 1px solid rgba(35,40,56,.55);
+            }
+            .row::before {
+                content: "";
+                position: absolute;
+                left: 0;
+                top: 0;
+                bottom: 0;
+                width: 4px;
+            }
+            .row[data-tone="critical"]::before {
+                background: var(--red);
+            }
+
+            .row[data-tone="warn"]::before {
+                background: var(--amber);
+            }
+
+            .row[data-tone="info"]::before {
+                background: var(--blue);
+            }
+            .row[data-tone="critical"] { border-left-color: var(--red); background: var(--red-bg); }
+            .row[data-tone="warn"] { border-left-color: var(--amber); background: var(--amber-bg); }
+            .row[data-tone="info"] { border-left-color: var(--blue); }
+            .row.is-new { animation: flash .9s ease; }
+            @keyframes flash { from { background: rgba(61,158,255,.22); } }
+
+           .time {
+                flex: none;
+                font-family: "Roboto", sans-serif;
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--text-3);
+                min-width: 100px;
+                padding-left: 16px;
+            }
+
+            .msg {
+                font-family: "Roboto", sans-serif;
+                font-size: 14px;
+                font-weight: 500;
+                color: #D6DAEA;
+                word-break: break-word;
+            }
+            .row[data-tone="critical"] .time { color: #FF8FA3; }
+            .row[data-tone="critical"] .msg { color: #FFE1E7; }
+            .row[data-tone="warn"] .time { color: #FFCB70; }
+            .empty-msg { text-align: center; color: var(--text-2); padding: 50px 20px; }
+        </style>
+    </head>
+    <body>
+        <header>
+            <h1>${escapeHtml(name)}</h1>
+            <div class="toolbar">
+                <input id="filter" type="text" placeholder="13:50 or 13:50-13:55">
+                <span class="chip" data-tone="critical">Critical</span>
+                <span class="chip" data-tone="warn">Warning</span>
+                <span class="chip" data-tone="info">Info</span>
+            </div>
+        </header>
+        <main id="list">
+            ${rowsHtml || '<p class="empty-msg">No alerts recorded for this well.</p>'}
+        </main>
+        <script>
+            const listEl = document.getElementById('list');
+            const input = document.getElementById('filter');
+            const chips = [...document.querySelectorAll('.chip')];
+            const active = new Set();
+
+            function apply() {
+                const q = input.value.trim();
+
+                const rows = [...listEl.querySelectorAll('.row')];
+
+                let startTime = null;
+                let endTime = null;
+
+                if (q.includes('-')) {
+                    const parts = q.split('-');
+
+                    startTime = parts[0].trim();
+                    endTime = parts[1].trim();
+                }
+
+                for (const row of rows) {
+
+                    const timeText =
+                        (row.querySelector('.time')?.textContent || '').trim();
+
+                    let matchesText = true;
+
+                    if (startTime && endTime) {
+
+                        matchesText =
+                            timeText >= startTime &&
+                            timeText <= endTime;
+
+                    } else if (q) {
+
+                        matchesText =
+                            timeText.startsWith(q);
+                    }
+
+                    const matchesTone =
+                        active.size === 0 ||
+                        active.has(row.dataset.tone);
+
+                    row.style.display =
+                        (matchesText && matchesTone)
+                            ? ''
+                            : 'none';
+                }
+            }
+
+            input.addEventListener('input', apply);
+
+            for (const chip of chips) {
+                chip.addEventListener('click', () => {
+                    const tone = chip.dataset.tone;
+                    if (active.has(tone)) {
+                        active.delete(tone);
+                        chip.removeAttribute('data-active');
+                    } else {
+                        active.add(tone);
+                        chip.dataset.active = '1';
+                    }
+                    apply();
+                });
+            }
+
+            // Called from the dashboard tab when a poll finds new alerts -
+            // prepended, since rows are already newest-first.
+            window.insertLogRows = function (html) {
+                const empty = listEl.querySelector('.empty-msg');
+                if (empty) empty.remove();
+
+                listEl.insertAdjacentHTML('afterbegin', html);
+
+                for (const row of [...listEl.children].slice(0, html.split('<div').length - 1)) {
+                    row.classList.add('is-new');
+                }
+
+                apply();
+            };
+        </script>
+    </body>
+    </html>`;
+}
+
+/* Polls /alerts/all for the well the log tab is showing, and sends only the
+   rows that were not there last time - the same "one thing in flight, no
+   pile-up" shape as startPolling() uses for the dashboard itself. */
+function pollLogs() {
+    if (!logsWin || logsWin.closed) {
+        stopLogsPoll();
+        logsWin = null;
+        return;
+    }
+
+    api('/alerts/all/' + encodeURIComponent(logsWellName))
+        .then((data) => {
+            const alerts = data.alerts || [];
+
+            if (alerts.length > logsKnownCount) {
+                const fresh = alerts.slice(logsKnownCount);
+                logsKnownCount = alerts.length;
+
+                // Newest first, same as the initial render.
+                const html = [...fresh].reverse().map(logRowHtml).join('');
+
+                if (typeof logsWin.insertLogRows === 'function') {
+                    logsWin.insertLogRows(html);
+                }
+            }
+        })
+        .catch(() => {
+            // A miss here is quiet - the tab just does not update until the
+            // next poll succeeds, same as the main dashboard's own polling.
+        })
+        .finally(() => {
+            if (logsWin && !logsWin.closed) {
+                logsPollTimer = setTimeout(pollLogs, S.pollMs);
+            } else {
+                stopLogsPoll();
+                logsWin = null;
+            }
+        });
+}
+
+el.showLogs.addEventListener('click', () => {
+    if (!editing) {
+        return;
+    }
+
+    const name = editing;
+
+    stopLogsPoll();
+
+    // Reuse the tab if it is already open on this same well, instead of
+    // stacking up a new one every click.
+    if (logsWin && !logsWin.closed && logsWellName === name) {
+        logsWin.focus();
+        logsPollTimer = setTimeout(pollLogs, S.pollMs);
+        return;
+    }
+
+    const win = window.open(
+        '/logs.html?well=' + encodeURIComponent(name),
+        '_blank'
+    );
+
+    if (!win) {
+        toast('Your browser blocked the popup — allow popups for this site and try again.', 'error');
+        return;
+    }
+
+    win.document.write(
+        '<body style="font-family: "Roboto", sans-serif;background:#0B0D14;color:#E7EAF5;padding:24px;"><p>Loading…</p></body>',
+    );
+
+    api('/alerts/all/' + encodeURIComponent(name))
+        .then((data) => {
+            const alerts = data.alerts || [];
+
+            logsWin = win;
+            logsWellName = name;
+            logsKnownCount = alerts.length;
+
+            win.document.open();
+            win.document.write(logsPageHtml(name, alerts));
+            win.document.close();
+
+            logsPollTimer = setTimeout(pollLogs, S.pollMs);
+        })
+        .catch((err) => {
+            win.document.open();
+            win.document.write(
+                `<p style="font-family: "Roboto", sans-serif;color:#FF4D6A;padding:24px;">Could not load logs: ${escapeHtml(err.message)}</p>`,
+            );
+            win.document.close();
+            toast('Could not load logs: ' + err.message, 'error');
+        });
 });
 
 // ---------------------------------------------------------------------------

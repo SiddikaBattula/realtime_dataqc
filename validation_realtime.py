@@ -1,3 +1,5 @@
+
+
 """
 Realtime QC checks - the rules that turn one reading into a list of alerts.
 
@@ -5,7 +7,8 @@ One RealtimeValidator per well. It holds the state the change checks need
 (the previous SPP, SPM, ROP and HOOKLOAD readings and when each was taken),
 so it cannot be shared between wells - build one per agent.
 
-Seven checks run on every reading, in this order:
+Seven checks run on every reading, in this order (each now lives in its own
+file under alerts_logic/ - see that package's docstring for the map):
 
   1. activity      DRILLING or NON DRILLING, from hole depth minus bit depth
                    against this well's drilling_criteria, then every parameter
@@ -30,8 +33,6 @@ Parameters are referred to by logical name throughout (SPP, ROP, HOOKLOAD
 ...); ColumnMapper is what turns those into this table's columns.
 """
 
-import re
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -42,62 +43,32 @@ from alert_log import AlertLog
 from column_mapper import ColumnMapper, to_number
 from config import Config
 from logger import get_logger
-from rule_files import DRILLING, NON_DRILLING, RuleFileError
+from rule_files import RuleFileError
 
+from alerts_logic import (
+    ALERT_TIME_FORMAT,
+    EVENT_SUBJECTS,
+    INVERSE_PARAMS,
+    PUMPS,
+    DERIVED_PARAMS,
+    OPTIONAL_PARAMS,
+    alert_raised_at,
+    detect_activity as _detect_activity,
+    run_zero_checks,
+    run_range_checks,
+    run_ta_tg_check,
+    run_spp_check,
+    run_rop_check,
+    run_hookload_check,
+    run_bit_depth_check,
+)
+
+# alert_raised_at, ALERT_TIME_FORMAT etc. are re-exported above so anything
+# that used to do `from realtime_validator import alert_raised_at` (or the
+# other constants) keeps working unchanged.
 
 log = get_logger(__name__)
 
-# The timestamp every alert starts with, "[17-09-26 05-32-43]". The alerts
-# endpoint and the agent read it back to tell how old an alert is.
-ALERT_TIME_FORMAT = "%d-%m-%y %H-%M-%S"
-
-_ALERT_STAMP = re.compile(r"^\[([^\]]*)\]")
-
-# Subjects raised by checks that only look once per window (or, for HOOKLOAD,
-# once per stall period). A reading in between says nothing about them, so
-# they are not cleared just for not being raised - their own check clears them
-# when it looks and finds nothing.
-EVENT_SUBJECTS = {"SPP_CHANGE", "SPM_CHANGE", "ROP_CHANGE", "HOOKLOAD_STUCK"}
-
-# Parameters whose column holds the reciprocal of the unit their limits are
-# written in, so `factor` divides the reading instead of multiplying it.
-#
-# ROP is the only one: the rig stores minutes per metre and ranges is written
-# in metres per hour, and 60 / 0.5 min/m = 120 m/hr. Every other parameter is
-# a straight multiply - HOOKLOAD's 2.268 turns daN into klbf.
-INVERSE_PARAMS = {"ROP"}
-
-# The pump columns SPM is totalled from. A rig with three pumps simply has no
-# column for the other two, and they are skipped.
-PUMPS = ("MP1_SPM", "MP2_SPM", "MP3_SPM", "MP4_SPM", "MP5_SPM")
-
-# Logical names that are worked out from other columns instead of being read
-# from one of their own.
-#
-# SPM is the only one: wherever it is checked - the range check and the
-# activity zero-check both - the value used is PUMPS added up, never whatever
-# a column called SPM holds. So a rig whose table has no SPM column (this one
-# calls its own total TOT_SPM) is checked perfectly well, and "no such column
-# exists, check skipped" is wrong about it twice over. What actually matters is
-# whether the pumps resolved, which is what _audit_config asks instead.
-DERIVED_PARAMS = {"SPM"}
-
-# Absent columns that are not a mistake. A four-pump rig has no MP5_SPM, and
-# _get_total_spm adds up whichever pumps are there - so telling the reader to
-# go and put the right column name in is advice about a pump that does not
-# exist.
-OPTIONAL_PARAMS = set(PUMPS)
-
-# Logical names that are worked out from other columns instead of being read
-# from one of their own.
-#
-# SPM is the only one: wherever it is checked - the range check and the
-# activity zero-check both - the value used is PUMPS added up, not whatever a
-# column called SPM holds. So a rig whose table has no SPM column (this one
-# calls its total TOT_SPM) is perfectly well checked, and saying "no such
-# column exists, check skipped" about it is wrong twice over. What actually
-# matters is whether the pumps resolved, which is what _audit_config asks.
-DERIVED_PARAMS = {"SPM"}
 
 def _stamp(path):
     """
@@ -112,19 +83,6 @@ def _stamp(path):
     try:
         return Path(path).stat().st_mtime_ns
     except OSError:
-        return None
-
-
-def alert_raised_at(alert):
-    """When an alert was raised, from its "[17-09-26 05-32-43]" prefix, or None."""
-    match = _ALERT_STAMP.match(alert) if isinstance(alert, str) else None
-
-    if not match:
-        return None
-
-    try:
-        return datetime.strptime(match.group(1), ALERT_TIME_FORMAT)
-    except ValueError:
         return None
 
 
@@ -145,18 +103,13 @@ class ValidationResult:
 
 
 class RealtimeValidator:
-    def __init__(self, mapper, ranges, activity_rules, conditions, drilling_criteria,bit_depth_threshold,
+    def __init__(self, mapper, ranges, activity_rules, conditions, drilling_criteria,bd_threshold_drillign,bd_threshold_non_drilling,
                  rules_path=None, well=None):
-        # One process runs an agent per well and they all write to the same
-        # files, so the well's name goes in the logger rather than being left
-        # for each message to remember: every line is then attributable, and
-        # `grep "qc.alerts.KJ-16" logs/app.log` is one well's whole story.
+
         self.well = well or "unknown-well"
         self.log = get_logger(f"validation.{self.well}")
 
-        # Everything about what the log says, and why, lives in alert_log.py -
-        # this class is the drilling rules. refresh() below hands it the rules
-        # in force so its sentences quote the limits that are actually running.
+    
         self.alert_log = AlertLog(self.well)
 
         self.mapper = mapper
@@ -164,13 +117,8 @@ class RealtimeValidator:
         self.activity_rules = activity_rules
         self.conditions = conditions
 
-        # Metres of hole depth minus bit depth that still count as on bottom.
-        # This well's own - build_validator reads it out of its rules, and
-        # reload_rules_if_changed picks up an edit to it within a reading.
         self.drilling_criteria = drilling_criteria
 
-        # subject -> what its last saved alert said (see raise_alert in
-        # validate). A subject is dropped from here when its problem clears.
         self._last_alerted = {}
 
 
@@ -213,7 +161,8 @@ class RealtimeValidator:
         self._last_activity = None
 
         self.last_bit_depth = None
-        self.bit_depth_threshold = bit_depth_threshold
+        self.bd_threshold_drillign = bd_threshold_drillign
+        self.bd_threshold_non_drilling = bd_threshold_non_drilling
 
         # What the well's rule file looked like when it was last read in.
         self._rule_stamp = _stamp(self.rules_path)
@@ -250,18 +199,7 @@ class RealtimeValidator:
         self.hookload_duration = conditions["HOOKLOAD"]["duration_seconds"]
 
     def reload_rules_if_changed(self, row):
-        """
-        Pick up an edit to this well's rules without a restart.
 
-        The dashboard writes the well's file; this notices on the next reading
-        and reads it in again. The SPP, TotalSPM, ROP and HOOKLOAD baselines
-        are left alone, so changing a threshold does not throw away the
-        history those checks are in the middle of measuring against.
-
-        A file that cannot be read is reported once and the rules already in
-        memory keep running - a well should not stop being checked because
-        someone saved something odd.
-        """
         if self.rules_path is None:
             return False
 
@@ -290,8 +228,8 @@ class RealtimeValidator:
             self.activity_rules = rules["activity"]
             self.conditions = rules["conditions"]
             self.drilling_criteria = rule_files.drilling_criteria_of(rules)
-            self.bit_depth_threshold = rules.get("bit_depth_threshold",rule_files.DEFAULT_BIT_DEPTH_THRESHOLD)
-
+            self.bd_threshold_drillign = rules.get("bd_threshold_drillign",rule_files.DEFAULT_BIT_DEPTH_THRESHOLD)
+            self.bd_threshold_non_drilling=rules.get("bd_threshold_non_drilling",rule_files.DEFAULT_BIT_DEPTH_THRESHOLD)
             self._apply_conditions()
             self._refresh_alert_log()
 
@@ -430,24 +368,7 @@ class RealtimeValidator:
 
     # ------------------------------------------------------------------
     def _apply_factor(self, param, value, factor):
-        """
-        The reading converted into the unit its limits are written in.
 
-        `factor` is the number entered against the parameter in the form. For
-        almost everything it multiplies: HOOKLOAD's 2.268 turns the stored daN
-        into the klbf its limits are written in. For a parameter in
-        INVERSE_PARAMS it divides instead, because the column holds the
-        reciprocal unit - ROP's 60 turns 0.5 minutes per metre into 120 metres
-        per hour. Leave the factor out and the column is compared as stored,
-        ROP included.
-
-        Returns None when the reading cannot be converted at all - a ROP of 0
-        is the bit not advancing, and 60/0 is not a speed. The caller skips the
-        check rather than comparing a number that means nothing.
-
-        A factor that is not a usable number is reported and ignored rather
-        than allowed to skip the check.
-        """
         if factor is None:
             return value
 
@@ -470,14 +391,8 @@ class RealtimeValidator:
         return round(value * multiplier, 4)
 
     def _in_limit_unit(self, param, value):
-        """
-        `value` in the unit this well's limits for `param` are written in.
 
-        The one place a reading is converted, so the range check and the
-        percentage-change checks cannot end up comparing different units - see
-        the ROP change check, which was reading the raw column while the range
-        check beside it read m/hr.
-        """
+
         if value is None:
             return None
 
@@ -506,51 +421,16 @@ class RealtimeValidator:
         """
         What the rig is doing, from how far the bit is off bottom.
 
-        The margin is this well's own drilling_criteria, not a figure shared
-        by every rig: one rig's depth channels agree to the centimetre and
-        another's are half a metre apart while still on bottom, and reading
-        the second one against the first's margin would call every reading
-        NON DRILLING and run the wrong set of activity checks all shift.
+        Thin delegate onto alerts_logic.activity_check.detect_activity so
+        anything already calling self.detect_activity(...) keeps working -
+        the logic itself lives there now, unchanged.
         """
-        total_depth = data.get("DEPTH")
-        bit_depth = data.get("BIT_DPT_MD")
-
-        if total_depth is None or bit_depth is None:
-            raise_alert(
-                f"[{date_str}] Cannot determine activity: "
-                f"{self.display_name('DEPTH')}={total_depth}, "
-                f"{self.display_name('BIT_DPT_MD')}={bit_depth}",
-                "DEPTH", "BIT_DPT_MD",
-                subject="ACTIVITY_UNDETERMINED",
-                value=(total_depth is None, bit_depth is None),
-                why=(
-                    f"activity needs both depths: DEPTH={total_depth} "
-                    f"(column {self.mapper.column_for('DEPTH')}), "
-                    f"BIT_DPT_MD={bit_depth} "
-                    f"(column {self.mapper.column_for('BIT_DPT_MD')}) - "
-                    "one of them is missing or not a number in this row"
-                ),
-            )
-            return None
-
-        gap = total_depth - bit_depth
-
-        activity = DRILLING if gap <= self.drilling_criteria else NON_DRILLING
-
-        if activity != self._last_activity:
-            # The margin is logged with the gap: "why is this well DRILLING at
-            # 0.4 m off bottom" is answered by the two numbers together.
-            self.log.debug(
-                "Activity %s (hole %s - bit %s = %.2f m, criteria %g m)",
-                activity, total_depth, bit_depth, gap, self.drilling_criteria,
-            )
-            self._last_activity = activity
-
-        return activity
+        return _detect_activity(self, data, raise_alert, date_str)
 
     def display_name(self, param):
         """What `param` is called in alert text: its display name, or itself."""
         return self.display_names.get(param, param)
+
     # ------------------------------------------------------------------
     # Main entry point - mirrors the original validate_realtime_data()
     # ------------------------------------------------------------------
@@ -575,21 +455,7 @@ class RealtimeValidator:
         raised = set()
 
         def raise_alert(message, *params, subject, value=None, why=None):
-            """
-            Record a problem, unless it repeats the last alert about the same thing.
 
-            `subject` is what the alert is about (ROP_CHANGE, RANGE:HOOKLOAD,
-            ZERO:SPP ...). `value` is what it says about it - the part of the
-            message that matters, leaving out the timestamp and the bit depth.
-            "ROP increased by 12%" at BD 2239 and again at BD 2240 is the same
-            alert and is saved once; "ROP increased by 30%" is a new one.
-
-            `why` is the arithmetic behind it, in the units the check actually
-            compared: which reading, off which column, against which limit. It
-            is for the log only and never reaches the alert file - the alert
-            text is what the rig crew reads, this is what answers "why did that
-            fire?" at 3am without anyone having to re-derive it from the rules.
-            """
             raised.add(subject)
             standing.append(message)
             standing_sources.append(params)
@@ -602,13 +468,28 @@ class RealtimeValidator:
             alerts.append(message)
             sources.append(params)
 
-        date_str = datetime.now().strftime(ALERT_TIME_FORMAT)
+        # One clock read for the whole reading: the stamp every alert carries
+        # and every elapsed time measured below come off the same instant,
+        # rather than each check taking its own a few microseconds apart.
+        now = datetime.now()
+
+        date_str = now.strftime(ALERT_TIME_FORMAT)
         bit_depth = normalized_data.get("BIT_DPT_MD")
-        total_depth=normalized_data.get("DEPTH")
+        total_depth = normalized_data.get("DEPTH")
         depth_unit = self.ranges.get("DEPTH", {}).get("unit", "")
+
+        # The pumps added up, once. The activity zero-check and the range
+        # check below both ask for it, and nothing between them can change
+        # what it comes to.
+        total_spm = self._get_total_spm(normalized_data)
         spp_percentage = 0.0
         totalspm_percentage = 0.0
         rop_percentage = 0.0
+
+        # For the reading() call at the bottom - same values the TA>TG check
+        # itself looks at.
+        ta = normalized_data.get("TA")
+        tg = normalized_data.get("TG")
 
         # ------------------------------------------------------------------
         # 1. Activity conditions
@@ -616,574 +497,57 @@ class RealtimeValidator:
         activity = self.detect_activity(normalized_data, raise_alert, date_str)
 
         if activity:
-            rules = self.activity_rules.get(activity)
-
-            if not rules:
-                raise_alert(
-                    f"[{date_str}] Unknown activity: {activity}",
-                    subject="ACTIVITY_UNKNOWN",
-                    value=activity,
-                    why=(
-                        f"the rig is {activity} but this well's activity rules "
-                        f"only cover {', '.join(self.activity_rules) or 'nothing'} - "
-                        "no zero-checks could be run for this reading"
-                    ),
-                )
-                self.log.error("activity.json has no rule block for '%s'", activity)
-
-            else:
-               for param, is_mandatory in rules.items():
-
-                    # Only validate parameters marked as mandatory
-                    if is_mandatory != 1:
-                        continue
-
-                    if param == "SPM":
-                        
-                        value = self._get_total_spm(normalized_data)
-                        if value <= 0:
-                            raise_alert(
-                                f"[{date_str}] {self.display_name(param)} cannot be 0 in {activity} where BD:{bit_depth}{depth_unit}, MD:{total_depth}{depth_unit}",
-                                "SPM",
-                                subject="ZERO:SPM",
-                                value=activity,
-                                why=(
-                                    f"activity[{activity}] requires SPM above 0; "
-                                    f"pumps total {value} "
-                                    f"({self.alert_log.pump_breakdown(normalized_data, PUMPS)})"
-                                ),
-                            )
-
-                        continue
-
-                    if not self.mapper.is_available(param):
-                        continue
-
-                    value = normalized_data.get(param)
-
-                    if value is None or value <= 0:
-                        raise_alert(
-                            f"[{date_str}] {self.display_name(param)} cannot be 0 in {activity} where BD:{bit_depth}{depth_unit}, MD:{total_depth}{depth_unit}",
-                            param,
-                            subject=f"ZERO:{param}",
-                            value=activity,
-                            why=self.alert_log.zero_reason(param, activity, value),
-                        )
-                                            
+            run_zero_checks(
+                self, activity, normalized_data, raise_alert, date_str,
+                bit_depth, total_depth, depth_unit, total_spm,
+            )
 
         # ------------------------------------------------------------------
         # 2. Ranges
         # ------------------------------------------------------------------
-
-        for param, limits in self.ranges.items():
-            if param == "SPM":
-                value = self._get_total_spm(normalized_data)
-
-                if value <= 0:
-                    continue
-            else:
-                value = normalized_data.get(param)
-
-                if value is None:
-                    continue
-
-            # min, max and factor are tolerated as strings in the file
-            # ("60"), so they are coerced here rather than compared raw -
-            # comparing a float against a str is a TypeError, and it would
-            # take down the whole reading, not just this one check.
-            min_val = to_number(limits.get("min"))
-            max_val = to_number(limits.get("max"))
-
-            if min_val is None or max_val is None:
-                self.log.error(
-                    "ranges.json: '%s' has a min/max that is not a number "
-                    "(%r / %r) - range check skipped",
-                    param, limits.get("min"), limits.get("max"),
-                )
-                continue
-
-            # Compared as floats, quoted as they are written in the file, so a
-            # limit of 200 still reads "200" in the alert and not "200.0".
-            min_text = limits["min"]
-            max_text = limits["max"]
-
-            unit = limits.get("unit", "")
-
-            # `factor` converts the stored reading into the unit the limits
-            # are written in, before either is compared. ROP is the reason it
-            # exists: the table stores it in minutes per metre and the limits
-            # are in m/hr. Without this the limits were being applied to the
-            # raw column, which is the unit they were never written for.
-            raw = value
-            value = self._in_limit_unit(param, value)
-
-            if value is None:
-                # ROP at 0: the bit is not advancing, which is normal on every
-                # connection and trip. There is no speed to range-check, so
-                # this reading says nothing about the parameter either way.
-                self.log.debug("%s is 0 - nothing to convert, range check skipped", param)
-                continue
-
-            if value < min_val:
-                raise_alert(
-                    f"[{date_str}] {self.display_name(param)} : {value:.2f}{unit} below limit {min_text}{unit} BD : {bit_depth}{depth_unit} ",
-                    param,
-                    subject=f"RANGE:{param}",
-                    value=f"below {value:.2f}",
-                    why=self.alert_log.range_reason(
-                    param, raw, value, limits, "below", min_text,
-                    inverse=param.upper() in INVERSE_PARAMS,
-                ),
-                )
-
-            elif value > max_val:
-                raise_alert(
-                    f"[{date_str}] {self.display_name(param)} : {value:.2f}{unit} above limit {max_text}{unit}  BD : {bit_depth}{depth_unit}",
-                    param,
-                    subject=f"RANGE:{param}",
-                    value=f"above {value:.2f}",
-                    why=self.alert_log.range_reason(
-                    param, raw, value, limits, "above", max_text,
-                    inverse=param.upper() in INVERSE_PARAMS,
-                ),
-                )
+        run_range_checks(
+            self, normalized_data, raise_alert, date_str,
+            bit_depth, depth_unit, total_spm,
+        )
 
         # ------------------------------------------------------------------
         # 3. TA > TG
         # ------------------------------------------------------------------
-        ta = normalized_data.get("TA")
-        tg = normalized_data.get("TG")
-
-        if ta is not None and tg is not None:
-            if ta > tg:
-                if self.ta_gt_tg_start is None:
-                    self.ta_gt_tg_start = datetime.now()
-                    self.log.debug("TA>TG started (TA=%s TG=%s)", ta, tg)
-
-                elapsed = (datetime.now() - self.ta_gt_tg_start).total_seconds()
-
-                if elapsed >= self.ta_tg_duration:
-                    raise_alert(
-                        f"[{date_str}] {self.display_name('TA')} is greater than "
-                        f"{self.display_name('TG')} where BD:{bit_depth}",
-                        "TA",
-                        "TG",
-                        subject="TA_TG",
-                        why=(
-                            f"TA={ta} has been above TG={tg} for {elapsed:.0f}s, "
-                            f"past conditions[TA_TG] of {self.ta_tg_duration}s"
-                        ),
-                    )
-            else:
-                # Reset timer when condition clears
-                if self.ta_gt_tg_start is not None:
-                    self.log.debug("TA>TG cleared")
-                self.ta_gt_tg_start = None
-
-        # # ------------------------------------------------------------------
-        # # 4. SPP change
-        # # ------------------------------------------------------------------
-        # spp = normalized_data.get("SPP")
-
-        # if spp is not None and spp > 0:
-        #     current_time = datetime.now()
-
-        #     # First value
-        #     if self.previous_spp is None:
-        #         self.previous_spp = spp
-        #         self.previous_spp_time = current_time
-
-        #     # Prevent division by zero
-        #     elif self.previous_spp <= 0:
-        #         self.previous_spp = spp
-        #         self.previous_spp_time = current_time
-
-        #     else:
-        #         elapsed = (current_time - self.previous_spp_time).total_seconds()
-
-        #         if elapsed >= self.spp_duration:
-
-        #             percent_change = ((spp - self.previous_spp) / self.previous_spp) * 100
-
-        #             self.log.debug("SPP %s -> %s over %.1fs = %.2f%%",
-        #                       self.previous_spp, spp, elapsed, percent_change)
-
-        #             if percent_change > self.spp_threshold:
-        #                 raise_alert(
-        #                     f"[{date_str}] {self.display_name('SPP')} increased by {percent_change:.2f}% where BD:{bit_depth}{depth_unit}",
-        #                     "SPP",
-        #                     subject="SPP_CHANGE",
-        #                     value=f"increased {percent_change:.2f}",
-        #                     why=self.alert_log.change_reason(
-        #                         "SPP", self.previous_spp, spp, elapsed,
-        #                         percent_change, self.spp_threshold,
-        #                         self.spp_duration,
-        #                     ),
-        #                 )
-
-        #             elif percent_change < -self.spp_threshold:
-        #                 raise_alert(
-        #                     f"[{date_str}] {self.display_name('SPP')} dropped by {abs(percent_change):.2f}% where BD:{bit_depth}{depth_unit}",
-        #                     "SPP",
-        #                     subject="SPP_CHANGE",
-        #                     value=f"dropped {abs(percent_change):.2f}",
-        #                     why=self.alert_log.change_reason(
-        #                         "SPP", self.previous_spp, spp, elapsed,
-        #                         percent_change, self.spp_threshold,
-        #                         self.spp_duration,
-        #                     ),
-        #                 )
-
-        #             else:
-        #                 # Looked and found a steady SPP: the next move is a new
-        #                 # alert even if it is the same size as the last one.
-        #                 self._last_alerted.pop("SPP_CHANGE", None)
-
-        #             # Reset baseline
-        #             self.previous_spp = spp
-        #             self.previous_spp_time = current_time
-
-        #             spp_percentage = round(percent_change, 2)
-
-        # # ------------------------------------------------------------------
-        # # 5. TotalSPM change
-        # # ------------------------------------------------------------------
-        # totalspm = normalized_data.get("SPM")
-
-        # if totalspm is not None:
-        #     current_time = datetime.now()
-
-        #     # First value
-        #     if self.previous_totalspm is None:
-        #         self.previous_totalspm = totalspm
-        #         self.previous_totalspm_time = current_time
-
-        #     # Prevent division by zero
-        #     elif self.previous_totalspm <= 0:
-        #         self.previous_totalspm = totalspm
-        #         self.previous_totalspm_time = current_time
-
-        #     else:
-        #         elapsed = (current_time - self.previous_totalspm_time).total_seconds()
-
-        #         if elapsed >= self.totalspm_duration:
-
-        #             percent_change = (
-        #                 (totalspm - self.previous_totalspm) / self.previous_totalspm
-        #             ) * 100
-
-        #             self.log.debug("TotalSPM %s -> %s over %.1fs = %.2f%%",
-        #                       self.previous_totalspm, totalspm, elapsed, percent_change)
-
-        #             if percent_change > self.totalspm_threshold:
-        #                 raise_alert(
-        #                     f"[{date_str}] TotalSPM increased by {percent_change:.2f}% Where BD-{depth}",
-        #                     "SPM",
-        #                 )
-
-        #             elif percent_change < -self.totalspm_threshold:
-        #                 raise_alert(
-        #                     f"[{date_str}] TotalSPM dropped by {abs(percent_change):.2f}% Where BD-{depth}",
-        #                     "SPM",
-        #                 )
-
-        #             self.previous_totalspm = totalspm
-        #             self.previous_totalspm_time = current_time
-
-        #             totalspm_percentage = round(percent_change, 2)
-
-
-
-        # # ------------------------------------------------------------------
-        # # 4.SPP alert 
-        # # ------------------------------------------------------------------
-        # curr_spp = normalized_data.get("SPP")
-        # curr_spm = self._get_total_spm(normalized_data)
-
-        # curr_spp = self._apply_factor(
-        #     "SPP",
-        #     normalized_data.get("SPP"),
-        #     self.ranges.get("SPP", {}).get("factor"),
-        # )
-
-        # curr_spm = self._apply_factor(
-        #     "SPM",
-        #     self._get_total_spm(normalized_data),
-        #     self.ranges.get("SPM", {}).get("factor"),
-        # )
-
-        # self.log.warning(
-        #     "DEBUG 1 | SPP=%s | SPM=%s | MP1=%s | MP2=%s | MP3=%s | MP4=%s",
-        #     curr_spp,
-        #     curr_spm,
-        #     normalized_data.get("MP1_SPM"),
-        #     normalized_data.get("MP2_SPM"),
-        #     normalized_data.get("MP3_SPM"),
-        #     normalized_data.get("MP4_SPM"),
-        # )
-
-        # if (
-        #     curr_spp is not None
-        #     and curr_spm is not None
-        #     and curr_spm > 0
-        # ):
-
-
-        #     current_time = datetime.now()
-
-     
-        #     input_factor = self.spp_threshold / 100.0
-
-    
-        #     factor_elapsed = (
-        #         current_time - self.spp_spm_factor_time
-        #     ).total_seconds()
-
-        #     self.log.warning(
-        #         "Factor age = %.1fs",
-        #         factor_elapsed
-        #     )
-
-        #     if factor_elapsed >= self.spp_factor_duration:
-
-        #         self.spp_spm_factor = curr_spp / curr_spm
-
-        #         self.spp_spm_factor_time = current_time
-
-        #         self.log.warning(
-        #             "FACTOR UPDATED | SPP=%.4f | SPM=%.4f | Factor=%.4f",
-        #             curr_spp,
-        #             curr_spm,
-        #             self.spp_spm_factor,
-        #         )
-
-
-
-        #     if self.spp_spm_factor > 0:
-
-        #         comparison_elapsed = (
-        #             current_time - self.spp_comparison_time
-        #         ).total_seconds()
-
-        #         self.log.warning(
-        #             "Comparison age = %.1fs",
-        #             comparison_elapsed
-        #         )
-
-        #         if comparison_elapsed >= 5:
-
-        #             # Reset comparison timer
-        #             self.spp_comparison_time = current_time
-
-
-        #             calculated_spp = curr_spm * self.spp_spm_factor
-
-        #             upper_limit = calculated_spp + (
-        #                 calculated_spp * input_factor
-        #             )
-
-        #             lower_limit = calculated_spp - (
-        #                 calculated_spp * input_factor
-        #             )
-
-        #             self.log.warning(
-        #                 "COMPARE | Factor=%.4f | Calculated SPP=%.4f | "
-        #                 "Current SPP=%.4f | Upper=%.4f | Lower=%.4f",
-        #                 self.spp_spm_factor,
-        #                 calculated_spp,
-        #                 curr_spp,
-        #                 upper_limit,
-        #                 lower_limit,
-        #             )
-
-
-        #             if upper_limit > calculated_spp:
-
-        #                 self.log.warning(
-        #                     "ALERT HIGH | %.2f > %.2f",
-        #                     upper_limit,
-        #                     calculated_spp,
-        #                 )
-
-        #                 raise_alert(
-        #                     f"SPP is out of expected range",
-        #                     subject="SPP_SPM_FACTOR",
-        #                     value=f"{calculated_spp:.2f}",
-        #                 )
-
-
-        #             elif lower_limit < calculated_spp:
-
-        #                 self.log.warning(
-        #                     "ALERT LOW | %.2f < %.2f",
-        #                     lower_limit,
-        #                     calculated_spp,
-        #                 )
-
-        #                 raise_alert(
-        #                     f"SPP is out of expected range",
-        #                     subject="SPP_SPM_FACTOR",
-        #                     value=f"{calculated_spp:.2f}",
-        #                 )
-
-        #             # ------------------------------------------------------
-        #             # NO ALERT
-        #             # ------------------------------------------------------
-
-        #             else:
-
-        #                 self.log.warning(
-        #                     "NO ALERT | %.2f is within %.2f and %.2f",
-        #                     calculated_spp,
-        #                     lower_limit,
-        #                     upper_limit,
-        #                 ) 
-
-
+        run_ta_tg_check(self, normalized_data, raise_alert, date_str, bit_depth, now)
+
+        # ------------------------------------------------------------------
+        # 4. SPP alert
+        # ------------------------------------------------------------------
+        run_spp_check(self, normalized_data,date_str, raise_alert)
 
         # ------------------------------------------------------------------
         # 6. ROP change
         # ------------------------------------------------------------------
-        # In the same unit as the limits, not the raw column. Read raw, the
-        # check was backwards for a rig storing minutes per metre: a value
-        # going up means the rig is drilling SLOWER, so "ROP increased by
-        # 100%" was raised on a bit that had just halved its rate of
-        # penetration, and a bit that doubled it raised nothing at all.
-        rop_raw = normalized_data.get("ROP")
-        rop = self._in_limit_unit("ROP", rop_raw)
+        rop_percentage = run_rop_check(
+            self, normalized_data, raise_alert, date_str, bit_depth, depth_unit, now,
+        )
 
-        if rop_raw is not None and rop is None:
-            # Not advancing - a connection or a trip. Nothing to compare, and
-            # the baseline goes with it so the next spell of drilling is
-            # measured from where it starts rather than from before the trip.
-            self.previous_rop = None
-            self.previous_rop_time = None
-
-        elif rop is not None:
-            current_time = datetime.now()
-
-            # First value
-            if self.previous_rop is None:
-                self.previous_rop = rop
-                self.previous_rop_time = current_time
-
-            # Prevent division by zero. ROP is legitimately 0 whenever the bit is
-            # not advancing (tripping, connections, circulating), so without this
-            # the next reading would divide by a zero baseline.
-            elif self.previous_rop <= 0:
-                self.previous_rop = rop
-                self.previous_rop_time = current_time
-
-            else:
-                elapsed = (current_time - self.previous_rop_time).total_seconds()
-
-                if elapsed >= self.rop_duration:
-
-                    percent_change = ((rop - self.previous_rop) / self.previous_rop) * 100
-
-                    self.log.debug("ROP %s -> %s over %.1fs = %.2f%%",
-                              self.previous_rop, rop, elapsed, percent_change)
-
-                    if percent_change > self.rop_threshold:
-                        raise_alert(
-                            f"[{date_str}] {self.display_name('ROP')} increased by {percent_change:.2f}%, BD:{bit_depth}{depth_unit}",
-                            "ROP",
-                            subject="ROP_CHANGE",
-                            value=f"increased {percent_change:.2f}",
-                            why=self.alert_log.change_reason(
-                                "ROP", self.previous_rop, rop, elapsed,
-                                percent_change, self.rop_threshold,
-                                self.rop_duration, raw=rop_raw,
-                            ),
-                        )
-
-                    else:
-                        self._last_alerted.pop("ROP_CHANGE", None)
-
-                    self.previous_rop = rop
-                    self.previous_rop_time = current_time
-
-                    rop_percentage = round(percent_change, 2)
         # ------------------------------------------------------------------
         # 7. Hookload unchanged
-        #
-        # A hookload that does not move at all is the sign of a stalled feed:
-        # the rig is still sending rows but the values in them are frozen.
         # ------------------------------------------------------------------
-
-        hookload = normalized_data.get("HOOKLOAD")
-
-        if hookload is not None:
-
-            current_time = datetime.now()
-
-            # First reading
-            if self.previous_hookload is None:
-                self.previous_hookload = hookload
-                self.previous_hookload_time = current_time
-
-            elif hookload == self.previous_hookload:
-
-                elapsed = (
-                    current_time - self.previous_hookload_time
-                ).total_seconds()
-
-                if elapsed >= self.hookload_duration:
-                    raise_alert(
-                        f"[{date_str}] Please check for data Trans. {self.display_name('HOOKLOAD')} has remained unchanged for {int(elapsed)} seconds",
-                        "HOOKLOAD",
-                        subject="HOOKLOAD_STUCK",
-                        why=self.alert_log.stuck_reason(
-                            "HOOKLOAD", hookload, elapsed, self.hookload_duration,
-                        ),
-                    )
-                    # Reset the timer so the alert does not fire every second
-                    # for as long as the value stays stuck.
-                    self.previous_hookload_time = current_time
-
-            else:
-                # Value moved -> start measuring again from here.
-                self.previous_hookload = hookload
-                self.previous_hookload_time = current_time
-
-                self._last_alerted.pop("HOOKLOAD_STUCK", None)
-
-
+        run_hookload_check(self, normalized_data, raise_alert, date_str, now)
 
         # ------------------------------------------------------------------
         # Depth Jump alert
         # ------------------------------------------------------------------
-        bit_depth = normalized_data.get("BIT_DPT_MD")
-        self.log.warning(
-            "BIT_DPT_MD VALUE = %s",
+        if activity == "DRILLING":
+            threshold = self.bd_threshold_drillign
+        else:
+            threshold = self.bd_threshold_non_drilling
+
+        run_bit_depth_check(
+            self,
             bit_depth,
+            raise_alert,
+            date_str,
+            depth_unit,
+            threshold,
         )
-
-        if self.last_bit_depth is not None:
-
-                difference = abs(bit_depth - self.last_bit_depth)
-
-                self.log.warning(
-                    "BIT DEPTH CHECK |current=%s | Previous=%s | Threshold=%.2f",
-                    bit_depth,
-                    f"{self.last_bit_depth:.2f}" if self.last_bit_depth is not None else "None",
-                    self.bit_depth_threshold,
-                )
-
-                if difference > self.bit_depth_threshold:
-                    raise_alert(
-                            (
-                                f"[{date_str}] "
-                                f"Bit Depth jump by {difference:.2f}{depth_unit} "
-                            ),
-                            "BIT_DPT_MD",
-                            subject="BIT_DEPTH_CHANGE",
-                            value=round(difference, 2),
-                        )
-
-        self.last_bit_depth = bit_depth
-
-        
 
         # ------------------------------------------------------------------
 
@@ -1212,6 +576,7 @@ class RealtimeValidator:
         )
 
 
+
     def reset_state(self):
         """Clear timers/baselines - use when the source table is switched."""
         self.ta_gt_tg_start = None
@@ -1230,21 +595,7 @@ class RealtimeValidator:
 # ----------------------------------------------------------------------
 
 def build_validator(sample_row, rules, rules_path=None, well=None):
-    """
-    A validator for one well, from that well's own rules.
 
-    `sample_row` is the first row read from its table: SELECT * gives every
-    column, which is what the mapping is matched against. Resolving here rather
-    than on the first check means a rig whose columns are named differently is
-    reported at startup.
-
-    `rules_path` is the file those rules came from. Given one, the validator
-    re-reads it whenever it changes, so an edit in the dashboard takes effect
-    without restarting the agent.
-
-    `well` is the database name, and is what every line this validator logs is
-    filed under - without it a shared log cannot say which rig raised what.
-    """
     mapper = ColumnMapper.from_mapping(
         rules["column_mapping"],
         derived=DERIVED_PARAMS,
@@ -1258,7 +609,11 @@ def build_validator(sample_row, rules, rules_path=None, well=None):
         activity_rules=rules["activity"],
         conditions=rules["conditions"],
         drilling_criteria=rule_files.drilling_criteria_of(rules),
-        bit_depth_threshold=rules.get("bit_depth_threshold",rule_files.DEFAULT_BIT_DEPTH_THRESHOLD),
+        bd_threshold_drillign=rules.get("bd_threshold_drillign",rule_files.DEFAULT_BD_THRESHOLD_DRILLING),
+        bd_threshold_non_drilling=rules.get("bd_threshold_non_drilling",rule_files.DEFAULT_BD_THRESHOLD_NON_DRILLING),
         rules_path=rules_path,
         well=well,
     )
+
+
+

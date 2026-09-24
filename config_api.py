@@ -365,6 +365,27 @@ def delete_well(database_name: str):
     return {"message": f"{database_name} removed"}
 
 
+@app.get("/alerts/all/{database_name}")
+def get_all_alerts(database_name: str):
+
+    file_path = Path("output") / database_name / "alerts.json"
+
+    if not file_path.exists():
+        return {
+            "database_name": database_name,
+            "count": 0,
+            "alerts": []
+        }
+
+    with open(file_path, "r", encoding="utf-8") as fh:
+        alerts = json.load(fh)
+
+    return {
+        "database_name": database_name,
+        "count": len(alerts),
+        "alerts": alerts
+    }
+
 # ---------------------------------------------------------------------------
 # One value at a time - the everyday edits
 # ---------------------------------------------------------------------------

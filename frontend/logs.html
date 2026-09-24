@@ -1,0 +1,211 @@
+<!-- <!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Alert Logs</title>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #0B0D14;
+            color: #E7EAF5;
+            font-family: Segoe UI, Arial, sans-serif;
+        }
+
+        h2 {
+            margin-bottom: 15px;
+        }
+
+        #filter {
+            width: 300px;
+            padding: 8px;
+            margin-bottom: 15px;
+            border-radius: 6px;
+            border: 1px solid #333;
+            background: #11141F;
+            color: white;
+        }
+
+        .row {
+            display: flex;
+            gap: 15px;
+            padding: 6px 10px;
+            border-bottom: 1px solid #232838;
+        }
+
+        .time {
+            min-width: 80px;
+            color: #8A91AC;
+            font-family: Consolas, monospace;
+        }
+
+        .msg {
+            flex: 1;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h2 id="well-name">Loading...</h2>
+
+    <input id="filter" placeholder="13:50 or 13:50-13:55">
+
+    <div id="list"></div>
+
+    <script>
+
+        const API_BASE = '';
+
+        const params = new URLSearchParams(window.location.search);
+
+        const WELL_NAME = params.get('well');
+
+        document.getElementById('well-name').textContent =
+            WELL_NAME + ' Alerts';
+
+        function parseAlert(raw) {
+
+            const match =
+                /^\[([^\]]*)\]\s*(.*)$/.exec(String(raw));
+
+            if (!match) {
+                return {
+                    time: '',
+                    message: String(raw)
+                };
+            }
+
+            const time =
+                (match[1].split(' ')[1] || '')
+                    .replace(/-/g, ':');
+
+            return {
+                time,
+                message: match[2]
+            };
+        }
+
+        async function loadLogs() {
+
+            const response =
+                await fetch(
+                    API_BASE +
+                    '/alerts/all/' +
+                    encodeURIComponent(WELL_NAME)
+                );
+
+            const data =
+                await response.json();
+
+            renderLogs(
+                data.alerts || []
+            );
+        }
+
+        function renderLogs(alerts) {
+
+            const list =
+                document.getElementById('list');
+
+            list.innerHTML = '';
+
+            [...alerts]
+                .reverse()
+                .forEach(alert => {
+
+                    const item =
+                        parseAlert(alert);
+
+                    const row =
+                        document.createElement('div');
+
+                    row.className = 'row';
+
+                    row.dataset.time =
+                        item.time;
+
+                    row.innerHTML = `
+                <span class="time">${item.time}</span>
+                <span class="msg">${item.message}</span>
+            `;
+
+                    list.appendChild(row);
+                });
+
+            applyFilter();
+        }
+
+        function applyFilter() {
+
+            const q =
+                document
+                    .getElementById('filter')
+                    .value
+                    .trim();
+
+            const rows =
+                document.querySelectorAll('.row');
+
+            let start = null;
+            let end = null;
+
+            if (q.includes('-')) {
+
+                const parts =
+                    q.split('-');
+
+                start =
+                    parts[0].trim();
+
+                end =
+                    parts[1].trim();
+            }
+
+            rows.forEach(row => {
+
+                const t =
+                    row.dataset.time;
+
+                let visible = true;
+
+                if (start && end) {
+
+                    visible =
+                        t >= start &&
+                        t <= end;
+
+                } else if (q) {
+
+                    visible =
+                        t.startsWith(q);
+                }
+
+                row.style.display =
+                    visible
+                        ? ''
+                        : 'none';
+            });
+        }
+
+        document
+            .getElementById('filter')
+            .addEventListener(
+                'input',
+                applyFilter
+            );
+
+        loadLogs();
+
+        setInterval(
+            loadLogs,
+            5000
+        );
+
+    </script>
+
+</body>
+
+</html> -->

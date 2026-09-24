@@ -362,7 +362,7 @@ body::before {
     position: relative;
     display: flex;
     flex-direction: column;
-    border: 3px solid var(--border-soft);
+    border: 2px solid var(--border-soft);
     border-radius: var(--radius);
     background: linear-gradient(165deg, rgba(31, 36, 53, .85), var(--surface) 58%);
     box-shadow: var(--shadow);
@@ -595,10 +595,12 @@ body::before {
 }
 
 .alert[data-tone="warn"] {
+    border-left-width: 4px;
     border-left-color: var(--amber);
 }
 
 .alert[data-tone="info"] {
+    border-left-width: 4px;
     border-left-color: var(--accent-2);
 }
 
@@ -620,21 +622,9 @@ body::before {
     word-break: break-word;
 }
 
-/* .alert[data-tone="transmission"] {
-    background: #f4df98;
-    border-left: 5px solid #ff8f00;
-    color: #111 !important;
-    font-weight: 700;
-}
-
-.alert[data-tone="transmission"] .alert-time,
-.alert[data-tone="transmission"] .alert-msg {
-    color: #111 !important;
-} */
-
 .alert[data-tone="critical"] {
     background: rgba(255, 59, 92, 0.12);
-    border-left: 3px solid #ff3b5c;
+    border-left: 4px solid #ff3b5c;
     border-top: 1px solid rgba(255, 59, 92, 0.25);
     border-bottom: 1px solid rgba(255, 59, 92, 0.25);
     box-shadow: 0 0 12px rgba(255, 59, 92, 0.25);
@@ -799,7 +789,7 @@ body[data-resizing] {
     text-align: center;
     gap: 5px;
     padding: 76px 20px;
-    border: 1px solid var(--border-soft);
+    border: 2px solid var(--border-soft);
     border-radius: var(--radius);
     background: linear-gradient(165deg, rgba(31, 36, 53, .55), rgba(17, 20, 31, .8));
 }
@@ -876,7 +866,7 @@ body[data-resizing] {
     min-height: 0;
     /* Clips the scrolling body to the rounded corners. */
     overflow: hidden;
-    border: 1px solid var(--border);
+    border: 2px solid var(--border);
     border-radius: 13px;
     background: linear-gradient(165deg, var(--surface-2), var(--surface));
     box-shadow: 0 24px 60px -18px rgba(0, 0, 0, .9), 0 0 40px -20px rgba(124, 107, 255, .5);
@@ -910,12 +900,12 @@ body[data-resizing] {
     justify-content: space-between;
     gap: 12px;
     padding: 15px 11px 15px 17px;
-    border-bottom: 1px solid var(--border-soft);
+    border-bottom: 2px solid var(--border-soft);
 }
 
 .modal-head h2 {
     margin: 0;
-    font-size: 14px;
+    font-size: 25px;
     font-weight: 600;
     letter-spacing: -.01em;
 }
@@ -929,6 +919,14 @@ body[data-resizing] {
 
 .modal-tabs[hidden],
 .modal-form[hidden] {
+    display: none;
+}
+
+/* .btn sets display: inline-flex, which - being an author style - outranks
+   the browser's own [hidden] { display: none } rule. Without this, a button
+   with the hidden attribute (like #show-logs outside of editing a well)
+   stays visible. */
+.btn[hidden] {
     display: none;
 }
 

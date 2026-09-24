@@ -114,6 +114,10 @@
             <form class="modal-form" id="add-well-form" autocomplete="off">
                 <div class="modal-body">
 
+                    <!-- The form's sections behave as an accordion (see
+                         initAccordion in app.js): only one of these <details>
+                         should start with the "open" attribute, or the first
+                         toggle click has nothing to close them against. -->
                     <details class="group" open>
                         <summary class="group-head">
                             <span>Connection</span>
@@ -135,9 +139,9 @@
                         </div>
                     </details>
 
-                    <details class="group" open>
+                    <details class="group">
                         <summary class="group-head">
-                            <span>Off-bottom margin</span>
+                            <span>Set Threshold Value</span>
                             <span class="group-note">Metres: hole depth &minus; bit depth at or under this is
                                 DRILLING</span>
                         </summary>
@@ -184,6 +188,7 @@
                 <footer class="modal-foot">
                     <p class="modal-error" id="modal-error" hidden></p>
                     <button class="btn" id="reset-defaults" type="button">Reset to defaults</button>
+                    <button class="btn" id="show-logs" type="button" hidden>Show Logs</button>
                     <button class="btn btn-primary" id="add-submit" type="submit">Start monitoring</button>
                 </footer>
             </form>

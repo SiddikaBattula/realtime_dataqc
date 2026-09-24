@@ -76,8 +76,9 @@ class Config:
     # not to this machine, and is entered per well in the dashboard. This is
     # only the starting value, and what a well saved before the setting existed
     # is read under.
-    DEFAULT_DRILLING_CRITERIA = float(os.getenv("DEFAULT_DRILLING_CRITERIA", "0.1"))
-    DEFAULT_BIT_DEPTH_THRESHOLD = float(os.getenv("DEFAULT_BIT_DEPTH_THRESHOLD", "5"))
+    DEFAULT_DRILLING_CRITERIA = float(os.getenv("DEFAULT_DRILLING_CRITERIA"))
+    DEFAULT_BD_THRESHOLD_DRILLING = float(os.getenv("DEFAULT_BD_THRESHOLD_DRILLING"))
+    DEFAULT_BD_THRESHOLD_NON_DRILLING=float(os.getenv("DEFAULT_BD_THRESHOLD_NON_DRILLING"))
     # ---- where things live -------------------------------------------
     BASE_DIR = APP_DIR
 

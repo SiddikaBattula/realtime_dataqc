@@ -507,7 +507,8 @@ RULE_BLOCKS = (
     "conditions",
     "ranges",
     "drilling_criteria",
-    "bit_depth_threshold"
+    "bd_threshold_drilling",
+    "bd_threshold_non_drilling"
 )
 
 # Metres of hole depth minus bit depth that still count as on bottom. It used
@@ -517,7 +518,8 @@ RULE_BLOCKS = (
 # well's form opens with, and what a well saved before the change is read
 # under - see well_rules._read. Set it in .env as DEFAULT_DRILLING_CRITERIA.
 DEFAULT_DRILLING_CRITERIA = Config.DEFAULT_DRILLING_CRITERIA
-DEFAULT_BIT_DEPTH_THRESHOLD = Config.DEFAULT_BIT_DEPTH_THRESHOLD
+DEFAULT_BD_THRESHOLD_DRILLING = Config.DEFAULT_BD_THRESHOLD_DRILLING
+DEFAULT_BD_THRESHOLD_NON_DRILLING=Config.DEFAULT_BD_THRESHOLD_NON_DRILLING
 
 def drilling_criteria_of(rules):
     """
@@ -525,7 +527,7 @@ def drilling_criteria_of(rules):
 
     Anything unusable - missing, null, left over from before the setting
     existed - falls back to the default rather than raising: a well is better
-    checked against 0.1 m than not checked at all. save() is where a bad value
+    checked against 0.05 m than not checked at all. save() is where a bad value
     is refused, and it is refused there before it can ever be stored.
     """
     if not isinstance(rules, dict):
@@ -616,7 +618,7 @@ def validate_set(rules):
         )
 
     # Checked with the same _as_number as every other figure in the rules, so
-    # "0.1" typed into the form is read the way "60" in a factor already is,
+    # "0.05" typed into the form is read the way "60" in a factor already is,
     # and true/false is refused rather than counted as 1.
     criteria = _as_number(
         rules["drilling_criteria"],
@@ -636,19 +638,34 @@ def validate_set(rules):
             "count as DRILLING, so the smallest it goes is 0"
         )
 
-    bit_depth_threshold = _as_number(
-        rules["bit_depth_threshold"],
-        "bit_depth_threshold"
+    bd_threshold_drilling = _as_number(
+        rules["bd_threshold_drilling"],
+        "bd_threshold_drilling"
     )
 
-    if not math.isfinite(bit_depth_threshold):
+    if not math.isfinite(bd_threshold_drilling):
         raise RuleFileError(
-            "bit_depth_threshold must be a valid number"
+            "bd_threshold_drilling must be a valid number"
         )
 
-    if bit_depth_threshold < 0:
+    if bd_threshold_drilling < 0:
         raise RuleFileError(
-            "bit_depth_threshold cannot be negative"
+            "bd_threshold_drilling cannot be negative"
+        )
+
+    bd_threshold_non_drilling = _as_number(
+        rules["bd_threshold_drilling"],
+        "bd_threshold_drilling"
+    )
+
+    if not math.isfinite(bd_threshold_non_drilling):
+        raise RuleFileError(
+            "bd_threshold_non_drilling must be a valid number"
+        )
+
+    if bd_threshold_non_drilling < 0:
+        raise RuleFileError(
+            "bd_threshold_non_drilling cannot be negative"
         )
 
     # The mapping first: it decides which parameter names the other three are
@@ -686,7 +703,7 @@ def tidy_set(rules):
 
     tidy["activity"] = rename_old_activities(tidy["activity"])
 
-    # "0.1" out of a text box is the number 0.1, and is stored as one - the
+    # "0.05" out of a text box is the number 0.05, and is stored as one - the
     # validator compares it against a depth and never re-reads the file. A
     # value that is not a number at all is left exactly as it came in, for
     # validate_set to name properly.
@@ -711,7 +728,8 @@ def template():
         "conditions": load("conditions"),
         "ranges": load("ranges"),
         "drilling_criteria": DEFAULT_DRILLING_CRITERIA,
-        "bit_depth_threshold": DEFAULT_BIT_DEPTH_THRESHOLD,
+        "bd_threshold_drilling": DEFAULT_BD_THRESHOLD_DRILLING,
+        "bd_threshold_non_drilling": DEFAULT_BD_THRESHOLD_NON_DRILLING
     }
 
     rules["activity"] = rename_old_activities(

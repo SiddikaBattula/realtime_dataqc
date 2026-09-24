@@ -18,7 +18,7 @@ the rules and working backwards. Each alert now carries the check's own
 arithmetic, and the whole reading is printed under it:
 
     Well         : KJ-16
-    Activity     : DRILLING  (off-bottom margin 0.1)
+    Activity     : DRILLING  (off-bottom margin 0.05)
     ...
     Alerts       : 2
       1. ROP : 120.00m/hr above limit 100m/hr  BD : 2000.0m

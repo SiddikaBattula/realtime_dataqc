@@ -7,5 +7,7 @@
     "TA": "TA",
     "ROT_TORQUE_AVG": "Torque",
     "HOOKLOAD": "Hookload",
-    "LEL": "LEL"
+    "LEL": "LEL",
+    "CONDUCT_OUT": "Conduct out",
+    "CONDUCT_IN": "Conduct in"
 }

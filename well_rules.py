@@ -17,7 +17,7 @@ One file per well, in data/wells/:
             "column_mapping":    {...},
             "conditions":        {...},
             "ranges":            {...},
-            "drilling_criteria": 0.1
+            "drilling_criteria": 0.05
         }
     }
 
@@ -118,7 +118,10 @@ def _read(path):
             "drilling_criteria", rule_files.DEFAULT_DRILLING_CRITERIA
         )
         rules.setdefault(
-            "bit_depth_threshold",rule_files.DEFAULT_BIT_DEPTH_THRESHOLD
+            "bd_threshold_drilling",rule_files.DEFAULT_BD_THRESHOLD_DRILLING
+        )
+        rules.setdefault(
+            "bd_threshold_non_drilling",rule_files.DEFAULT_BD_THRESHOLD_NON_DRILLING
         )
 
     return record
