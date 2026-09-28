@@ -1,10 +1,29 @@
 {
-  "mumbai": {
-    "base_head": "Siddika@ofiindia.com",
-    "operational_head": "Siddika@ofiindia.com"
+  "Mumbai": {
+    "base_head": "Siddika@ofiindia.com"
   },
-  "pune": {
-    "base_head": "Siddika@ofiindia.com",
-    "operational_head": "Siddika@ofiindia.com"
+  "Delhi": {
+    "base_head": "Siddika@ofiindia.com"
+  },
+  "Rajmandry": {
+    "base_head": "Siddika@ofiindia.com"
+  },
+  "Assam": {
+    "base_head": "Siddika@ofiindia.com"
+  },
+  "Nazira": {
+    "base_head": "Siddika@ofiindia.com"
+  },
+  "Oman": {
+    "base_head": "Siddika@ofiindia.com"
+  },
+  "Gatar": {
+    "base_head": "Siddika@ofiindia.com"
+  },
+  "Kuwait": {
+    "base_head": "Siddika@ofiindia.com"
+  },
+  "Thailand": {
+    "base_head": "Siddika@ofiindia.com"
   }
 }

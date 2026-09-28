@@ -309,6 +309,22 @@ def add_well(well: WellRequest):
     }
 
 
+
+def _current(database_name):
+    """The well's record as it is on disk now (the agent edits that file),
+    falling back to the registry copy."""
+    record = well_registry.get(database_name)
+
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No well called '{database_name}' is being monitored",
+        )
+
+    fresh = _guard(lambda: well_rules.load(database_name))
+
+    return fresh or record
+
 @app.get("/wells", summary="Which wells are being monitored")
 def get_wells():
     """
@@ -327,15 +343,7 @@ def get_wells():
 
 @app.get("/wells/{database_name}", summary="One well, with its rules")
 def get_well(database_name: str):
-    record = well_registry.get(database_name)
-
-    if record is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No well called '{database_name}' is being monitored",
-        )
-
-    return record
+    return _current(database_name)
 
 
 @app.put("/wells/{database_name}/rules", summary="Change one well's rules")

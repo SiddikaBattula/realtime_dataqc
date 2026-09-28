@@ -1,5 +1,5 @@
 {
-    "database_name": "dk-1233",
+    "database_name": "KJ-16",
     "ip_address": "43.241.39.241",
     "region": "Mumbai",
     "rules": {
@@ -209,7 +209,7 @@
             },
             "HOOKLOAD": {
                 "min": 10,
-                "max": 250.17,
+                "max": 200,
                 "unit": "kflb",
                 "factor": 2.268
             },

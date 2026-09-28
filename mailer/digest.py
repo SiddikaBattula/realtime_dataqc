@@ -21,6 +21,7 @@ The count is the point. "612x" says a problem stood for the whole window; "1x"
 says something happened once and cleared.
 """
 
+import well_agent
 import json
 import re
 
@@ -37,6 +38,17 @@ log = get_logger(__name__)
 # line - the same rule alert_log._fingerprint uses to decide when to reprint.
 _STAMP = re.compile(r"^\[[^\]]*\]\s*")
 _NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?")
+
+import re
+
+CRITICAL_PATTERNS = [
+    re.compile(r"Please check for data Trans", re.I),
+    re.compile(r"increased by", re.I),
+    re.compile(r"Bit Depth jump by", re.I),
+]
+
+def is_critical(message):
+    return any(pattern.search(message) for pattern in CRITICAL_PATTERNS)
 
 
 def _fingerprint(alert):
@@ -126,27 +138,26 @@ def group(stamped):
 
     return list(groups.values())
 
-
 def for_wells(wells, start, end):
     """
     [{well, groups, total}] for the wells that had anything to say.
 
-    A well with nothing in the window is left out rather than listed as clear:
-    the email is about what happened, and a list of quiet wells is the part
-    nobody reads.
+    Only critical alerts are considered - everything else is read from disk
+    (and still shown on the dashboard) but never makes it into a digest.
     """
     reported = []
 
     for well in sorted(wells):
-        groups = group(in_window(read_alerts(well), start, end))
+        alerts = [a for a in read_alerts(well) if is_critical(_message(a))]
+        window_alerts = in_window(alerts, start, end)
 
-        if not groups:
+        if not window_alerts:
             continue
 
         reported.append({
             "well": well,
-            "groups": groups,
-            "total": sum(entry["count"] for entry in groups),
+            "alerts": window_alerts,
+            "total": len(window_alerts),
         })
 
     return reported
@@ -204,51 +215,33 @@ def subject(digest):
     total = digest["total"]
     wells = len(digest["wells"])
 
-    return (
-        "[DataQC] {region}: {total} alert{s} on {wells} well{ws} "
-        "({start}-{end})".format(
-            region=digest["region"],
-            total=total,
-            s="" if total == 1 else "s",
-            wells=wells,
-            ws="" if wells == 1 else "s",
-            start=_clock(digest["start"]),
-            end=_clock(digest["end"]),
-        )
-    )
+    return "Automated Data Quality Alert Summary"
 
 
 def text_body(digest):
     lines = [
-        "Base region : {}".format(digest["region"]),
-        "Window      : {:%d-%m-%Y %H:%M:%S} to {:%H:%M:%S}".format(
-            digest["start"], digest["end"]
-        ),
-        "Alerts      : {} on {} well(s)".format(
-            digest["total"], len(digest["wells"])
-        ),
+        "Dear Team",
+        "",
+        "Base region: {}".format(digest["region"]),
         "",
     ]
 
     for item in digest["wells"]:
-        lines.append(item["well"])
-        lines.append("-" * len(item["well"]))
+        lines.append("well name: {}".format(item["well"]))
+        lines.append("alerts:")
 
-        for entry in item["groups"]:
-            times = _clock(entry["first"])
+        for raised, alert in item["alerts"]:
 
-            if entry["count"] > 1:
-                times += " to " + _clock(entry["last"])
-
-            lines.append("  " + entry["message"])
-            lines.append("      {}   raised {}x".format(times, entry["count"]))
+            lines.append(
+                f"• {_clock(raised)} | {_message(alert)}"
+            )
 
         lines.append("")
 
-    lines.append(
-        "Raised by Real-Time Data QC. Alerts are not written to any rig "
-        "database."
-    )
+    lines.append("Please check it")
+    lines.append("")
+    lines.append("Regards")
+    lines.append("Real-Time Data QC")
 
     return "\n".join(lines)
 
@@ -266,58 +259,40 @@ def _escape(text):
 # written on the element itself is not there by the time it is read.
 _CELL = "padding:5px 10px 5px 0;border-bottom:1px solid #e6e9f0;"
 
-
 def html_body(digest):
     parts = [
-        '<div style="font:14px -apple-system,Segoe UI,Roboto,Arial,sans-serif;'
-        'color:#1b1f2a">',
-        '<h2 style="margin:0 0 4px;font-size:17px">{}</h2>'.format(
-            _escape(digest["region"])
-        ),
-        '<p style="margin:0 0 16px;color:#5b6377;font-size:13px">'
-        '{:%d-%m-%Y %H:%M:%S} to {:%H:%M:%S} &middot; {} alert(s) on {} well(s)'
-        '</p>'.format(
-            digest["start"], digest["end"], digest["total"], len(digest["wells"])
-        ),
+        '<div style="font-family:Segoe UI,Arial,sans-serif;'
+        'font-size:14px;line-height:1.6;color:#333;">',
+
+        '<p>Dear Team,</p>',
+        '<p>An automated Data Quality Control (QC) check has flagged the following exception </p>'
     ]
-
+   
     for item in digest["wells"]:
+
         parts.append(
-            '<h3 style="margin:18px 0 6px;font-size:14px">{}'
-            ' <span style="color:#8a91ac;font-weight:400">{} alert(s)</span>'
-            '</h3>'.format(_escape(item["well"]), item["total"])
-        )
-        parts.append(
-            '<table cellpadding="0" cellspacing="0" style="width:100%;'
-            'border-collapse:collapse;font-size:13px">'
+            f'<p>Well Name: {_escape(item["well"])}</p>'
         )
 
-        for entry in item["groups"]:
-            times = _clock(entry["first"])
+        parts.append('<ul>')
 
-            if entry["count"] > 1:
-                times += " &ndash; " + _clock(entry["last"])
+        for raised, alert in item["alerts"]:
 
             parts.append(
-                '<tr>'
-                '<td style="{cell}white-space:nowrap;color:#5b6377">{times}</td>'
-                '<td style="{cell}">{message}</td>'
-                '<td style="{cell}text-align:right;white-space:nowrap;'
-                'color:#5b6377">&times;{count}</td>'
-                '</tr>'.format(
-                    cell=_CELL,
-                    times=times,
-                    message=_escape(entry["message"]),
-                    count=entry["count"],
-                )
+                f'<li>{_clock(raised)} | {_escape(_message(alert))}</li>'
             )
 
-        parts.append('</table>')
+        parts.append('</ul>')
 
-    parts.append(
-        '<p style="margin:22px 0 0;color:#8a91ac;font-size:12px">'
-        'Raised by Real-Time Data QC. Alerts are not written to any rig '
-        'database.</p></div>'
-    )
+    parts.extend([
+        '<br><p>Please review the identified condition and take appropriate corrective action if required.</p>',
+        '<p>Kindly investigate and provide feedback if necessary.</p>',
+        '<p>Regards,<br><b>Automated Data QC Monitoring System</b></p>',
+        '</div>'
+    ])
 
     return "".join(parts)
+
+
+
+

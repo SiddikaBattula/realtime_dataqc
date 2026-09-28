@@ -4,6 +4,10 @@ Check 2 - ranges.
 Each parameter inside its min/max from its ranges block, after `factor`
 converts the reading into the limits' unit - multiplying, or dividing for
 ROP (see INVERSE_PARAMS in constants.py).
+
+HOOKLOAD's max can be raised while the agent runs (see
+RealtimeValidator.update_hookload_max). It is raised in validator.ranges, so
+the limits read below are always the current ones.
 """
 
 from column_mapper import to_number
@@ -12,7 +16,7 @@ from .constants import INVERSE_PARAMS
 
 
 def run_range_checks(validator, normalized_data, raise_alert, date_str,
-                      bit_depth, depth_unit, total_spm):
+                     bit_depth, depth_unit, total_spm):
     for param, limits in validator.ranges.items():
         if param == "SPM":
             value = total_spm
@@ -40,8 +44,10 @@ def run_range_checks(validator, normalized_data, raise_alert, date_str,
             )
             continue
 
-        # Compared as floats, quoted as they are written in the file, so a
-        # limit of 200 still reads "200" in the alert and not "200.0".
+        # Quoted as they are written in the file, so a limit of 200 still
+        # reads "200" in the alert and not "200.0". A HOOKLOAD max that has
+        # been raised reads as its new value, because `limits` is the same
+        # dict that was updated.
         min_text = limits["min"]
         max_text = limits["max"]
 

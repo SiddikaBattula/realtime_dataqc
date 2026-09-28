@@ -876,7 +876,7 @@ function renderMapping() {
 // ---- conditions ----------------------------------------------------------
 
 // These two carry a duration and no percentage; the API refuses one anyway.
-const DURATION_ONLY = new Set(['TA_TG', 'HOOKLOAD']);
+const DURATION_ONLY = new Set(['TA_TG']);
 
 function renderConditions() {
     const host = document.getElementById('fields-conditions');

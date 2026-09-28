@@ -181,7 +181,7 @@ def _check_ranges(document, known):
             if factor == 0:
                 raise RuleFileError(f"ranges.json: '{param}.factor' cannot be 0")
 
-        extra = sorted(set(limits) - {"min", "max", "unit", "factor"})
+        extra = sorted(set(limits) - {"min", "max", "unit", "factor", "absolute_max"})
 
         if extra:
             raise RuleFileError(
@@ -654,8 +654,8 @@ def validate_set(rules):
         )
 
     bd_threshold_non_drilling = _as_number(
-        rules["bd_threshold_drilling"],
-        "bd_threshold_drilling"
+        rules["bd_threshold_non_drilling"],
+        "bd_threshold_non_drilling"
     )
 
     if not math.isfinite(bd_threshold_non_drilling):

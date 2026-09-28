@@ -44,7 +44,7 @@ from column_mapper import ColumnMapper, to_number
 from config import Config
 from logger import get_logger
 from rule_files import RuleFileError
-
+from collections import deque
 from alerts_logic import (
     ALERT_TIME_FORMAT,
     EVENT_SUBJECTS,
@@ -62,13 +62,16 @@ from alerts_logic import (
     run_hookload_check,
     run_bit_depth_check,
 )
-
+import json
+import os
 # alert_raised_at, ALERT_TIME_FORMAT etc. are re-exported above so anything
 # that used to do `from realtime_validator import alert_raised_at` (or the
 # other constants) keeps working unchanged.
 
 log = get_logger(__name__)
 
+# Parameters whose ranges "max" may be raised while the agent runs.
+ADJUSTABLE_MAX = ("HOOKLOAD", "SPP", "ROP", "WOB")
 
 def _stamp(path):
     """
@@ -125,7 +128,10 @@ class RealtimeValidator:
         # The well file these rules came from, watched for edits. None means
         # nothing to watch - the rules were handed in directly.
         self.rules_path = rules_path
-
+ 
+       
+        self.max_adjust = {}    # param -> (percentage, window seconds)
+        self.max_windows = {}   # param -> {"values": [...], "start": datetime}
         self._apply_conditions()
 
         # ---- persistent state (was module-level globals) ----
@@ -151,6 +157,7 @@ class RealtimeValidator:
         # Hookload monitoring
         self.previous_hookload = None
         self.previous_hookload_time = None
+        self.hookload_samples = []
 
         self.hookload_alerted = False
 
@@ -196,7 +203,183 @@ class RealtimeValidator:
         self.rop_threshold = conditions["ROP"]["percentage_change"]
         self.rop_duration = conditions["ROP"]["duration_seconds"]
 
-        self.hookload_duration = conditions["HOOKLOAD"]["duration_seconds"]
+        hook = conditions["HOOKLOAD"]
+        self.hookload_duration = hook["duration_seconds"]
+
+        self._load_max_adjust()
+
+
+
+    def _load_max_adjust(self):
+        """Which parameters have their max adjusted, and with what settings."""
+        self.max_adjust = {}
+        self.max_windows = {}
+
+        for param in ADJUSTABLE_MAX:
+            block = self.conditions.get(param)
+
+            if not isinstance(block, dict):
+                continue
+
+            if param == "HOOKLOAD":
+                pct = to_number(block.get("percentage_change"))
+                seconds = to_number(block.get("duration_seconds"))
+            else:
+                pct = to_number(block.get("max_adjust_percentage"))
+                seconds = to_number(block.get("max_adjust_seconds"))
+
+            if pct is None or seconds is None or seconds <= 0:
+                continue
+
+            self.max_adjust[param] = (pct, seconds)
+
+        if not self.max_adjust:
+            self.log.info("Max adjustment OFF - no parameter has its settings in conditions")
+            return
+
+        for param, (pct, seconds) in self.max_adjust.items():
+            self.log.info(
+                "%s max adjustment ON - +%s%% over %ss windows", param, pct, seconds
+            )
+
+    def update_adaptive_maxes(self, normalized_data, now):
+        for param, (pct, seconds) in self.max_adjust.items():
+            self._update_max(param, pct, seconds, normalized_data.get(param), now)
+
+    def _update_max(self, param, pct, seconds, raw, now):
+        """
+        Once per `seconds`: average the parameter (in the limits' unit), add
+        `pct` percent, and if that is above the current max make it the new max.
+        """
+        limits = self.ranges.get(param)
+
+        if not limits or raw is None:
+            return
+
+        value = self._in_limit_unit(param, raw)
+
+        # ROP at 0 has no speed to average; the window just skips that reading.
+        if value is None:
+            return
+
+        window = self.max_windows.setdefault(param, {"values": [], "start": None})
+
+        if window["start"] is None:
+            window["start"] = now
+
+        window["values"].append(value)
+
+        elapsed = (now - window["start"]).total_seconds()
+
+        if elapsed < seconds:
+            return   # window not finished yet
+
+        values = window["values"]
+        samples = len(values)
+        avg = sum(values) / samples
+        low, high = min(values), max(values)
+
+        window["values"] = []
+        window["start"] = None
+
+        calculated = round(avg + avg * pct / 100, 2)
+
+        current_max = to_number(limits.get("max"))
+
+        if current_max is None:
+            return
+
+        # Optional hard ceiling, written in the same ranges block.
+        cap = to_number(limits.get("absolute_max"))
+        capped = cap is not None and calculated > cap
+
+        if capped:
+            calculated = cap
+
+        self.log.info(
+            "%s window done | %.0fs, %d samples | min=%.2f max_seen=%.2f avg=%.2f | "
+            "cal=avg+%s%%=%.2f%s | current max=%.2f | %s",
+            param, elapsed, samples, low, high, avg, pct, calculated,
+            " (capped by absolute_max)" if capped else "",
+            current_max,
+            "cal > max -> UPDATE" if calculated > current_max
+            else "cal <= max -> no change",
+        )
+
+        if calculated > current_max:
+            self.log.info("%s max updated | %.2f -> %.2f", param, current_max, calculated)
+            self._save_max(param, calculated)
+
+    @staticmethod
+    def _find_limits(node, param):
+        """
+        The {"min", "max", ...} block for `param`, wherever the well file nests
+        it. Found by shape, not by the name of the key that holds it.
+        """
+        if isinstance(node, dict):
+            block = node.get(param)
+
+            if isinstance(block, dict) and "min" in block and "max" in block:
+                return block
+
+            for value in node.values():
+                found = RealtimeValidator._find_limits(value, param)
+
+                if found is not None:
+                    return found
+
+        elif isinstance(node, list):
+            for value in node:
+                found = RealtimeValidator._find_limits(value, param)
+
+                if found is not None:
+                    return found
+
+        return None
+
+    def _save_max(self, param, new_max):
+        """Put the new max in memory and in the well's rule file."""
+        self.ranges[param]["max"] = new_max
+
+        if self.rules_path is None:
+            return
+
+        path = Path(self.rules_path)
+
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                doc = json.load(fh)
+
+            block = self._find_limits(doc, param)
+
+            if block is None:
+                self.log.error(
+                    "%s max is %.2f in memory but %s has no min/max block for it "
+                    "(top-level keys: %s)",
+                    param, new_max, path.name,
+                    list(doc.keys()) if isinstance(doc, dict) else type(doc).__name__,
+                )
+                return
+
+            block["max"] = new_max
+
+            temporary = path.with_name(path.name + ".writing")
+            with open(temporary, "w", encoding="utf-8") as fh:
+                json.dump(doc, fh, indent=4, ensure_ascii=False)
+                fh.write("\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(temporary, path)
+
+            # Our own write must not look like an outside edit.
+            self._rule_stamp = _stamp(path)
+            self.log.info("%s max %.2f saved to %s", param, new_max, path.name)
+
+        except Exception as exc:
+            self.log.error(
+                "%s max is %.2f in memory but %s could not be updated (%r)",
+                param, new_max, path.name, exc,
+            )
 
     def reload_rules_if_changed(self, row):
 
@@ -228,8 +411,8 @@ class RealtimeValidator:
             self.activity_rules = rules["activity"]
             self.conditions = rules["conditions"]
             self.drilling_criteria = rule_files.drilling_criteria_of(rules)
-            self.bd_threshold_drillign = rules.get("bd_threshold_drillign",rule_files.DEFAULT_BIT_DEPTH_THRESHOLD)
-            self.bd_threshold_non_drilling=rules.get("bd_threshold_non_drilling",rule_files.DEFAULT_BIT_DEPTH_THRESHOLD)
+            self.bd_threshold_drillign = rules.get("bd_threshold_drillign", rule_files.DEFAULT_BD_THRESHOLD_DRILLING)
+            self.bd_threshold_non_drilling=rules.get("bd_threshold_non_drilling",rule_files.DEFAULT_BD_THRESHOLD_NON_DRILLING)
             self._apply_conditions()
             self._refresh_alert_log()
 
@@ -477,6 +660,7 @@ class RealtimeValidator:
         bit_depth = normalized_data.get("BIT_DPT_MD")
         total_depth = normalized_data.get("DEPTH")
         depth_unit = self.ranges.get("DEPTH", {}).get("unit", "")
+        rop_unit = self.ranges.get("ROP",{}).get("unit","")
 
         # The pumps added up, once. The activity zero-check and the range
         # check below both ask for it, and nothing between them can change
@@ -505,6 +689,7 @@ class RealtimeValidator:
         # ------------------------------------------------------------------
         # 2. Ranges
         # ------------------------------------------------------------------
+        self.update_adaptive_maxes(normalized_data, now)
         run_range_checks(
             self, normalized_data, raise_alert, date_str,
             bit_depth, depth_unit, total_spm,
@@ -524,7 +709,7 @@ class RealtimeValidator:
         # 6. ROP change
         # ------------------------------------------------------------------
         rop_percentage = run_rop_check(
-            self, normalized_data, raise_alert, date_str, bit_depth, depth_unit, now,
+            self, normalized_data, raise_alert, date_str, bit_depth, depth_unit,rop_unit, now,
         )
 
         # ------------------------------------------------------------------
@@ -584,6 +769,7 @@ class RealtimeValidator:
         self.previous_totalspm = self.previous_totalspm_time = None
         self.previous_rop = self.previous_rop_time = None
         self.previous_hookload = self.previous_hookload_time = None
+        self.max_windows = {}
         self._last_activity = None
         self._last_alerted.clear()
         self.alert_log.reset()

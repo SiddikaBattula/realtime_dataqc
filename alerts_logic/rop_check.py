@@ -8,7 +8,7 @@ minutes-per-metre column went up.
 """
 
 
-def run_rop_check(validator, normalized_data, raise_alert, date_str, bit_depth, depth_unit, now):
+def run_rop_check(validator, normalized_data, raise_alert, date_str, bit_depth, depth_unit,rop_unit, now):
     rop_raw = normalized_data.get("ROP")
     rop = validator._in_limit_unit("ROP", rop_raw)
 
@@ -51,9 +51,10 @@ def run_rop_check(validator, normalized_data, raise_alert, date_str, bit_depth, 
     validator.log.debug("ROP %s -> %s over %.1fs = %.2f%%",
                          validator.previous_rop, rop, elapsed, percent_change)
 
+    
     if percent_change > validator.rop_threshold:
         raise_alert(
-            f"[{date_str}] {validator.display_name('ROP')} increased by {percent_change:.2f}%, BD:{bit_depth}{depth_unit}",
+            f"[{date_str}] {validator.display_name('ROP')} increased by {percent_change:.2f}%({rop}{rop_unit}), BD:{bit_depth}{depth_unit}",
             "ROP",
             subject="ROP_CHANGE",
             value=f"increased {percent_change:.2f}",
