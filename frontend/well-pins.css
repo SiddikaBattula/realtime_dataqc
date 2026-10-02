@@ -1,0 +1,96 @@
+/*
+  Pinned well cards (well-pins.js): left where they are in the grid, marked by
+  a coloured header and a glowing border, and one pulse when pinned so the eye
+  goes to it.
+
+  Violet and blue are the brand accent - kept apart from amber (activity),
+  green / red (alert status) and the cyan of BD and TD.
+*/
+
+/* ---- the pin button, beside edit and stop ---- */
+
+.well-pin {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 25px;
+    height: 25px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-3);
+    cursor: pointer;
+    transition: background .14s, color .14s, border-color .14s;
+}
+
+.well-pin:hover {
+    background: var(--surface-3);
+    color: var(--text);
+}
+
+.well-pin .icon {
+    transform: rotate(35deg);
+    transition: transform .18s;
+}
+
+.well[data-pinned] .well-pin {
+    color: #FFF;
+    background: rgba(255, 255, 255, .16);
+    border-color: rgba(255, 255, 255, .3);
+}
+
+.well[data-pinned] .well-pin .icon {
+    fill: currentColor;
+    transform: none;
+}
+
+/* ---- the pinned card ---- */
+
+.well[data-pinned] .well-head {
+    background: linear-gradient(100deg, rgba(124, 107, 255, .55), rgba(61, 158, 255, .38));
+    border-bottom-color: rgba(124, 107, 255, .6);
+}
+
+/* The grey "BD:" / "TD:" labels are too faint on the coloured header. */
+.well[data-pinned] .well-depths {
+    color: rgba(255, 255, 255, .75);
+}
+
+.well[data-pinned] .well-edit,
+.well[data-pinned] .well-remove:not([data-armed]) {
+    color: rgba(255, 255, 255, .8);
+}
+
+/* A critical card keeps its red border - pinning must not hide an alarm. */
+.well[data-pinned]:not([data-tone="critical"]) {
+    border-color: rgba(124, 107, 255, .75);
+    box-shadow: var(--shadow), 0 0 26px -6px rgba(124, 107, 255, .7);
+}
+
+/* ---- the pulse when it is pinned ---- */
+
+/*
+  On an overlay, not on the card: the card's own `animation` is its entrance
+  (rise, in style.css), and replacing it - even briefly - replays that entrance
+  when the pulse ends, so a card pinned earlier would flicker and slide.
+*/
+.well-pin-pulse::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    border-radius: inherit;
+    pointer-events: none;
+    animation: well-pin-pulse 1.1s ease-out both;
+}
+
+@keyframes well-pin-pulse {
+    0% {
+        box-shadow: inset 0 0 0 3px rgba(124, 107, 255, .95), inset 0 0 40px rgba(124, 107, 255, .55);
+    }
+
+    100% {
+        box-shadow: inset 0 0 0 3px rgba(124, 107, 255, 0), inset 0 0 40px rgba(124, 107, 255, 0);
+    }
+}

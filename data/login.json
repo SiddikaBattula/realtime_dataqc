@@ -6,6 +6,12 @@
     },
     "sushma@ofiindia.com": {
         "role": "Base_head",
+        "base_region": "mumbai",
         "Password": "base_head@123"
+    },
+    "yo@ofiindia.com": {
+        "role": "RTOC_Team_Member",
+        "Password": "yogi@123",
+        "base_region": "mumbai"
     }
 }

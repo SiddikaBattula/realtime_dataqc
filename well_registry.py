@@ -29,6 +29,11 @@ _WELLS = {}
 # because it describes what the rig is doing now, not how it is to be checked.
 _ACTIVITY = {}
 
+# database_name -> {"bit_depth", "total_depth", "unit"} from the last reading
+# its agent checked, for the card header. Runtime only, like _ACTIVITY, and
+# cleared the same way when the rig cannot be reached.
+_DEPTHS = {}
+
 
 def load_saved():
     """Bring back every well on disk. Returns how many."""
@@ -62,6 +67,7 @@ def remove(database_name):
     with _LOCK:
         existed = _WELLS.pop(database_name, None) is not None
         _ACTIVITY.pop(database_name, None)
+        _DEPTHS.pop(database_name, None)
 
     well_rules.delete(database_name)
 
@@ -91,12 +97,29 @@ def set_activity(database_name, activity):
             _ACTIVITY[database_name] = activity
 
 
+def set_depths(database_name, bit_depth, total_depth, unit=""):
+    """
+    Record the bit depth and total depth of a well's latest reading.
+
+    None for both when the rig cannot be reached - a depth from before the
+    link dropped would look like a live one. Ignored for a removed well, for
+    the same reason as set_activity.
+    """
+    with _LOCK:
+        if database_name in _WELLS:
+            _DEPTHS[database_name] = {
+                "bit_depth": bit_depth,
+                "total_depth": total_depth,
+                "unit": unit or "",
+            }
+
+
 def summaries():
     """
     Every well without its rules, with the activity its agent last saw.
 
     The dashboard polls this every couple of seconds and only needs the name,
-    address and activity; the rule blocks are large and are fetched on demand
+    address, activity and depths; the rule blocks are large and are fetched on demand
     instead.
     """
     with _LOCK:
@@ -106,6 +129,9 @@ def summaries():
                 "ip_address": record["ip_address"],
                 "region": record.get("region", ""),
                 "activity": _ACTIVITY.get(name),
+                "bit_depth": _DEPTHS.get(name, {}).get("bit_depth"),
+                "total_depth": _DEPTHS.get(name, {}).get("total_depth"),
+                "depth_unit": _DEPTHS.get(name, {}).get("unit", ""),
             }
             for name, record in _WELLS.items()
         }

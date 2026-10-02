@@ -1,0 +1,56 @@
+/*
+  A well card's header title: the name and activity on one line, its bit
+  depth and total depth on the line under it (well-depths.js).
+*/
+
+.well-title {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    gap: 1px;
+}
+
+.well-title-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+/* style.css stretches the name to fill the header; inside the title row that
+   would push the activity away from it, so the name takes only its width. */
+.well-title-row .well-name {
+    flex: 0 1 auto;
+    line-height: 1.25;
+}
+
+/* Same line height as the name, so a card showing "(DRILLING)" has a header
+   no taller than one that does not. */
+.well-title-row .well-activity {
+    line-height: 1.25;
+}
+
+.well-depths {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 14px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.3;
+    color: var(--text-3);
+    white-space: nowrap;
+}
+
+.well-depths b {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+/*
+  One bright cyan for both values, so BD and TD stand out against the grey
+  labels. Kept clear of amber (activity) and green / red (alert status).
+*/
+.well-bd,
+.well-td {
+    color: #3DDCFF;
+}

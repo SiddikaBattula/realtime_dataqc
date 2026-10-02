@@ -74,12 +74,10 @@ const can = (permission) => Boolean(auth.user && auth.user.permissions.includes(
 async function loadUser() {
     auth.user = await api('/auth/me');
 
-    document.getElementById('user-name').textContent = auth.user.email;
-    document.getElementById('user-role').textContent =
-        auth.user.role.replaceAll('_', ' ')
-        + (auth.user.base_region ? ' · ' + auth.user.base_region : '');
-    document.getElementById('user-logout').href = API_BASE + '/auth/logout';
-    document.getElementById('user-chip').hidden = false;
+    renderUserMenu(auth.user, {
+        canAddPerson: can('add_user'),
+        logoutHref: API_BASE + '/auth/logout',
+    });
 
     const anySettings = ['add_well', 'display_names', 'email_settings'].some(can);
 
@@ -389,6 +387,7 @@ function buildCard(well) {
     name.textContent = well.database_name;
 
     showActivity(card, well.activity);
+    showDepths(card, well);
 
     name.title = well.database_name + '  ' + well.ip_address;
 
@@ -420,6 +419,9 @@ function buildCard(well) {
         remove.dataset.armed = '1';
         setTimeout(() => delete remove.dataset.armed, 3000);
     });
+
+    // The pin button, and whether this well was left pinned.
+    initPin(card, well.database_name);
 
     // The drag handles, and the size this well was last left at.
     initResize(card, well.database_name);
@@ -577,6 +579,9 @@ async function refresh() {
         // undefined every time and blanked the name - the activity appeared
         // for the moment the card was built and then never again.
         state.activity = wells[name].activity;
+
+        // From /wells too, so it updates even when the alerts call failed.
+        showDepths(state.card, wells[name]);
 
         if (results[index] === null) {
             // Alerts could not be fetched this pass. Keep the rows already

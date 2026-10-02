@@ -1,0 +1,35 @@
+/* The sign-in page. Colours and .field / .btn come from style.css. */
+
+.login {
+    min-height: 100%;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    position: relative;
+    z-index: 1;
+}
+
+.login-card {
+    width: 100%;
+    max-width: 380px;
+    padding: 26px 24px;
+    border: 1px solid var(--border);
+    border-radius: 13px;
+    background: linear-gradient(165deg, var(--surface-2), var(--surface));
+    display: grid;
+    gap: 16px;
+}
+
+.login-card h1 {
+    margin: 0;
+    font-size: 20px;
+    text-align: center;
+}
+
+.login-card img {
+    height: 44px;
+    justify-self: center;
+    padding: 3px 8px;
+    border-radius: 8px;
+    background: #FFF;
+}

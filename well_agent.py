@@ -147,6 +147,14 @@ class WellAgent:
                     self.current_activity = result.activity
                     self._standing = result.standing
 
+                    # For the card header: BD and TD of the reading just checked.
+                    well_registry.set_depths(
+                        self.database_name,
+                        result.normalized.get("BIT_DPT_MD"),
+                        result.normalized.get("DEPTH"),
+                        self.validator.ranges.get("DEPTH", {}).get("unit", ""),
+                    )
+
                     self.save_alerts(result.alerts)
 
                 # Every successful read, not just a changed one: after a
@@ -165,6 +173,7 @@ class WellAgent:
                 # Not reading, so not knowing: a stale DRILLING on the card
                 # would say the rig is on bottom when nobody can see it.
                 well_registry.set_activity(self.database_name, None)
+                well_registry.set_depths(self.database_name, None, None)
 
                 self._disconnect()
 

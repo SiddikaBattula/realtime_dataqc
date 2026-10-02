@@ -1,0 +1,229 @@
+/*
+  The account menu at the top right of the dashboard, beside Settings (user-menu.js).
+  Colours, radii and fonts come from the variables in style.css.
+*/
+
+.user-menu {
+    position: relative;
+    flex: none;
+}
+
+.user-menu[hidden] {
+    display: none;
+}
+
+/* ---- the button: initials and a caret ---- */
+
+.user-menu-button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px 3px 3px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text-2);
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+}
+
+.user-menu-button:hover,
+.user-menu-button[aria-expanded="true"] {
+    border-color: var(--accent);
+    background: var(--surface-3);
+}
+
+.user-menu-button:focus-visible {
+    outline: 2px solid var(--accent-2);
+    outline-offset: 2px;
+}
+
+.user-menu-caret {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: transform .15s;
+}
+
+.user-menu-button[aria-expanded="true"] .user-menu-caret {
+    transform: rotate(180deg);
+}
+
+.user-avatar {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #FFF;
+    font-size: 12.5px;
+    font-weight: 650;
+    letter-spacing: .02em;
+    user-select: none;
+}
+
+.user-avatar-large {
+    width: 44px;
+    height: 44px;
+    font-size: 16px;
+}
+
+/* ---- the panel ---- */
+
+.user-menu-panel {
+    position: absolute;
+    top: calc(100% + 10px);
+    right: 0;
+    z-index: 40;
+    width: min(300px, calc(100vw - 26px));
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: linear-gradient(165deg, var(--surface-2), var(--surface));
+    box-shadow: 0 18px 44px -14px rgba(0, 0, 0, .9), 0 0 30px -18px rgba(124, 107, 255, .55);
+    overflow: hidden;
+    animation: user-menu-in .14s ease-out both;
+}
+
+.user-menu-panel[hidden] {
+    display: none;
+}
+
+@keyframes user-menu-in {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+}
+
+.user-menu-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px;
+}
+
+.user-menu-who {
+    min-width: 0;
+}
+
+.user-menu-name {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.user-menu-email {
+    margin: 2px 0 0;
+    font: 12px var(--mono);
+    color: var(--text-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Role and region, as label / value rows. */
+.user-menu-details {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px 14px;
+    margin: 0;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border-soft);
+    border-bottom: 1px solid var(--border-soft);
+    background: rgba(10, 12, 20, .35);
+    font-size: 12.5px;
+}
+
+.user-menu-details dt {
+    color: var(--text-3);
+}
+
+.user-menu-details dd {
+    margin: 0;
+    color: var(--text);
+    text-align: right;
+    text-transform: capitalize;
+}
+
+.user-menu-details dd.is-empty {
+    color: var(--text-3);
+    font-style: italic;
+    text-transform: none;
+}
+
+.user-menu-role {
+    justify-self: end;
+    padding: 1px 8px;
+    border: 1px solid rgba(124, 107, 255, .45);
+    border-radius: 999px;
+    background: rgba(124, 107, 255, .12);
+    color: #C9C1FF !important;
+    font-size: 11.5px;
+}
+
+/* ---- the actions ---- */
+
+.user-menu-actions {
+    display: grid;
+    padding: 6px;
+}
+
+.user-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 10px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.user-menu-item[hidden] {
+    display: none;
+}
+
+.user-menu-item:hover,
+.user-menu-item:focus-visible {
+    background: var(--surface-3);
+    outline: none;
+}
+
+.user-menu-item svg {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    color: var(--text-2);
+}
+
+.user-menu-signout,
+.user-menu-signout svg {
+    color: var(--red);
+}
+
+.user-menu-signout:hover {
+    background: rgba(255, 77, 106, .1);
+}
+
+@media (max-width: 560px) {
+    .user-menu-caret {
+        display: none;
+    }
+}

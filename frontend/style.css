@@ -429,8 +429,8 @@ body::before {
 .well-head {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 12px 11px 12px 15px;
+    gap: 8px;
+    padding: 6px 8px 6px 12px;
     border-bottom: 1px solid var(--border-soft);
 }
 
@@ -887,6 +887,32 @@ body[data-resizing] {
     background: linear-gradient(165deg, var(--surface-2), var(--surface));
     box-shadow: 0 24px 60px -18px rgba(0, 0, 0, .9), 0 0 40px -20px rgba(124, 107, 255, .5);
     animation: pop .19s cubic-bezier(.2, .9, .3, 1.1) both;
+}
+
+/* The add-a-person dialog: four fields, not a rule set. */
+.modal-card-small {
+    max-width: 420px;
+}
+
+.modal-card-small .modal-body {
+    display: grid;
+    gap: 14px;
+}
+
+/* Password boxes drawn as dots, so the browser does not offer to save them
+   (secret-input.js). Used by the dashboard and login.html. */
+.secret-input {
+    -webkit-text-security: disc;
+}
+
+.field select {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: #0A0C14;
+    color: var(--text);
+    font: 13px var(--mono);
+    outline: none;
 }
 
 /*

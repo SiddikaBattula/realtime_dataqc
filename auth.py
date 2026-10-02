@@ -2,8 +2,8 @@
 Login by email + password from data/login.json.
 
 Each person has a row: role, base_region and password. The role and region are
-fixed by the file, never chosen by the person logging in. New people can be
-added from the login page, but only with an RTOC_Team_Head's email + password.
+fixed by the file, never chosen by the person logging in. New people are added
+from the dashboard, and only by someone signed in as a Base_head.
 """
 
 import hashlib
@@ -41,7 +41,8 @@ ROLE_PERMISSIONS = {
     "rtoc_team_head": set(_HEAD),
     "rtoc_team_member": {"view", "view_logs", "edit_rules"},
     "base_coordinator": {"view", "view_logs"},
-    "base_head": {"view", "view_logs"},
+    # add_user is Base_head's alone - nobody else can create a login.
+    "base_head": {"view", "view_logs", "add_user"},
 }
 
 # Older spellings still in use. Same permissions as the role they point at.
@@ -49,9 +50,6 @@ ALIASES = {"rtoc_header": "rtoc_team_head", "base_codinator": "base_coordinator"
 
 # Roles offered in the "add new person" form.
 CREATABLE_ROLES = ["RTOC_Team_Head", "RTOC_Team_Member", "Base_coordinator", "Base_head"]
-
-APPROVER_ROLE = "rtoc_team_head"
-
 
 def role_key(role) -> str:
     key = str(role).strip().lower()
@@ -157,7 +155,9 @@ def _add_user(email, role, region, password):
         if any(_email(existing) == email for existing in doc):
             return f"{email} already exists."
 
-        entry = {"role": role, "Password": make_hash(password)}
+        # Stored exactly as typed, at the owner's request, so login.json shows
+        # each person's password. check_password still accepts a pbkdf2$ hash.
+        entry = {"role": role, "Password": password}
 
         if region:
             entry["base_region"] = region
@@ -179,7 +179,7 @@ def _add_user(email, role, region, password):
 
 # ---------------------------------------------------------------------------
 # Passwords: plain text works; "pbkdf2$iterations$salt$hash" is also accepted.
-# New people added from the login page are always stored hashed.
+# New people added from the dashboard are stored as plain text, as typed.
 # Make one by hand with:  python auth.py hash "the password"
 # ---------------------------------------------------------------------------
 
@@ -293,36 +293,42 @@ async def login(request: Request):
     return {"status": "ok"}
 
 
+def _may_add_people(request: Request):
+    """The signed-in user if they may add people, otherwise a response refusing it."""
+    user = current_user(request)
+
+    if user is None:
+        return JSONResponse({"detail": "Sign in required"}, status_code=401)
+
+    if "add_user" not in ROLE_PERMISSIONS[user["key"]]:
+        log.warning("Denied add_user for %s", user["email"])
+        return JSONResponse(
+            {"detail": "Only a Base head can add new people."}, status_code=403
+        )
+
+    return user
+
+
 @router.get("/roles")
-async def roles():
+async def roles(request: Request):
     """Roles offered when adding a person."""
+    user = _may_add_people(request)
+
+    if isinstance(user, JSONResponse):
+        return user
+
     return {"roles": CREATABLE_ROLES}
 
 
 @router.post("/register")
 async def register(request: Request):
-    """Add a person. Needs an RTOC_Team_Head's email + password as approval."""
-    ip = _ip(request)
+    """Add a person. Only a signed-in Base_head may."""
+    approver = _may_add_people(request)
 
-    if _locked(ip):
-        return JSONResponse(
-            {"detail": f"Too many attempts. Wait {LOCK_SECONDS} seconds."}, status_code=429
-        )
+    if isinstance(approver, JSONResponse):
+        return approver
 
     body = await _json(request)
-
-    approver = load_logins().get(_email(body.get("approver_email", "")))
-
-    if (
-        approver is None
-        or approver["key"] != APPROVER_ROLE
-        or not check_password(approver["password"], str(body.get("approver_password", "")))
-    ):
-        _fail(ip)
-        return JSONResponse(
-            {"detail": "Approver must be an RTOC Team Head, with the right email and password."},
-            status_code=403,
-        )
 
     email = _email(body.get("email", ""))
     role = str(body.get("role", "")).strip()
@@ -372,7 +378,11 @@ async def logout(request: Request):
 # The gate
 # ---------------------------------------------------------------------------
 
-PUBLIC_PATHS = {"/health", "/login.html", "/style.css", "/logo-default-223x59.png"}
+# Everything the sign-in page loads, since nobody is signed in yet to fetch it.
+PUBLIC_PATHS = {
+    "/health", "/login.html", "/login.css", "/login.js", "/secret-input.js",
+    "/style.css", "/logo-default-223x59.png",
+}
 
 
 async def auth_gate(request: Request, call_next):
