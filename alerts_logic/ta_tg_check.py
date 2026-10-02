@@ -22,7 +22,7 @@ def run_ta_tg_check(validator, normalized_data, raise_alert, date_str, bit_depth
         if elapsed >= validator.ta_tg_duration:
             raise_alert(
                 f"[{date_str}] {validator.display_name('TA')} is greater than "
-                f"{validator.display_name('TG')} where BD:{bit_depth}",
+                f"{validator.display_name('TG')} where BD:{bit_depth:.2f}",
                 "TA",
                 "TG",
                 subject="TA_TG",

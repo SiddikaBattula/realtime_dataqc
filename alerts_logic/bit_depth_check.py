@@ -23,8 +23,8 @@ def run_bit_depth_check(validator, bit_depth, raise_alert, date_str, depth_unit,
             raise_alert(
                 (
                     f"[{date_str}] "
-                    f"last depth : {validator.last_bit_depth} | "
-                    f"current depth : {bit_depth} | "
+                    f"last depth : {validator.last_bit_depth:.2f} | "
+                    f"current depth : {bit_depth:.2f} | "
                     f"Bit Depth jump by {difference:.2f}{depth_unit} "
                 ),
                 "BIT_DPT_MD",

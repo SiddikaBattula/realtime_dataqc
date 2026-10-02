@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sign in - Real-Time Data QC</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="logo-default-223x59.png">
+    <style>
+        .login {
+            min-height: 100%;
+            display: grid;
+            place-items: center;
+            padding: 20px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .login-card {
+            width: 100%;
+            max-width: 380px;
+            padding: 26px 24px;
+            border: 1px solid var(--border);
+            border-radius: 13px;
+            background: linear-gradient(165deg, var(--surface-2), var(--surface));
+            display: grid;
+            gap: 16px;
+        }
+
+        .login-card h1 {
+            margin: 0;
+            font-size: 20px;
+            text-align: center;
+        }
+
+        .login-card h2 {
+            margin: 0;
+            font-size: 15px;
+            text-align: center;
+        }
+
+        .login-card img {
+            height: 44px;
+            justify-self: center;
+            padding: 3px 8px;
+            border-radius: 8px;
+            background: #FFF;
+        }
+
+        .field select {
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: #0A0C14;
+            color: var(--text);
+            font: 13px var(--mono);
+            outline: none;
+        }
+
+        .divider {
+            border: 0;
+            border-top: 1px solid var(--border-soft);
+            margin: 0;
+        }
+
+        .ok {
+            margin: 0;
+            font-size: 12px;
+            color: var(--green);
+        }
+    </style>
+</head>
+
+<body>
+    <main class="login">
+        <!-- Sign in -->
+        <form class="login-card" id="login-form" autocomplete="off">
+            <img src="logo-default-223x59.png" alt="OFI India">
+            <h1>Real-Time Data QC</h1>
+
+            <label class="field">
+                <span>Email</span>
+                <input type="email" id="email" placeholder="name@ofiindia.com" required autofocus>
+            </label>
+
+            <label class="field">
+                <span>Password</span>
+                <input type="password" id="password" required>
+            </label>
+
+            <p class="modal-error" id="error" hidden></p>
+            <button class="btn btn-primary btn-block" id="submit" type="submit">Sign in</button>
+            <button class="btn btn-block" id="show-add" type="button">Add new person</button>
+        </form>
+
+        <!-- Add a person (approved by an RTOC Team Head) -->
+        <form class="login-card" id="add-form" autocomplete="off" hidden>
+            <h2>Add new person</h2>
+
+            <label class="field">
+                <span>Email</span>
+                <input type="email" id="new-email" placeholder="name@ofiindia.com" required>
+            </label>
+
+            <label class="field">
+                <span>Role</span>
+                <select id="new-role" required></select>
+            </label>
+
+            <label class="field">
+                <span>Base region</span>
+                <input type="text" id="new-region" placeholder="mumbai" spellcheck="false">
+            </label>
+
+            <label class="field">
+                <span>Password for this person</span>
+                <input type="password" id="new-password" minlength="8" required>
+            </label>
+
+
+            <p class="modal-error" id="add-error" hidden></p>
+            <p class="ok" id="add-ok" hidden></p>
+            <button class="btn btn-primary btn-block" id="add-submit" type="submit">Add person</button>
+            <button class="btn btn-block" id="back" type="button">Back to sign in</button>
+        </form>
+    </main>
+
+    <script>
+        const $ = (id) => document.getElementById(id);
+
+        function say(box, message) {
+            box.textContent = message || '';
+            box.hidden = !message;
+        }
+
+        /* ---- sign in ---- */
+        $('login-form').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            say($('error'), '');
+            $('submit').disabled = true;
+
+            try {
+                const res = await fetch('/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: $('email').value, password: $('password').value }),
+                });
+
+                if (res.ok) {
+                    location.href = '/';
+                    return;
+                }
+                const body = await res.json().catch(() => ({}));
+                say($('error'), body.detail || 'Sign-in failed.');
+                $('password').value = '';
+            } finally {
+                $('submit').disabled = false;
+            }
+        });
+
+        /* ---- switch between the two forms ---- */
+        $('show-add').addEventListener('click', async () => {
+            $('login-form').hidden = true;
+            $('add-form').hidden = false;
+
+            if (!$('new-role').options.length) {
+                try {
+                    const body = await (await fetch('/auth/roles')).json();
+
+                    for (const name of body.roles) {
+                        const option = document.createElement('option');
+                        option.value = name;
+                        option.textContent = name.replaceAll('_', ' ');
+                        $('new-role').append(option);
+                    }
+                } catch (err) {
+                    say($('add-error'), 'Could not reach the server.');
+                }
+            }
+        });
+
+        $('back').addEventListener('click', () => {
+            $('add-form').hidden = true;
+            $('login-form').hidden = false;
+        });
+
+        /* ---- add a person ---- */
+        $('add-form').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            say($('add-error'), '');
+            say($('add-ok'), '');
+            $('add-submit').disabled = true;
+
+            try {
+                const res = await fetch('/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: $('new-email').value,
+                        role: $('new-role').value,
+                        base_region: $('new-region').value,
+                        password: $('new-password').value,
+                        approver_email: $('approver-email').value,
+                        approver_password: $('approver-password').value,
+                    }),
+                });
+
+                const body = await res.json().catch(() => ({}));
+
+                if (!res.ok) {
+                    say($('add-error'), body.detail || 'Could not add the person.');
+                    return;
+                }
+
+                say($('add-ok'), body.email + ' added. You can sign in now.');
+                $('email').value = body.email;
+                $('new-password').value = '';
+                $('approver-password').value = '';
+                setTimeout(() => $('back').click(), 1200);
+            } finally {
+                $('add-submit').disabled = false;
+            }
+        });
+    </script>
+</body>
+
+</html>

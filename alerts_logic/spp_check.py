@@ -9,7 +9,7 @@ when SPP sits outside spp_threshold percent of what that factor predicts.
 from datetime import datetime
 
 
-def run_spp_check(validator, normalized_data,data_str, raise_alert):
+def run_spp_check(validator, normalized_data,data_str, raise_alert,spp_unit,spm_unit):
     curr_spm = validator._get_total_spm(normalized_data)
 
     curr_spp = validator._apply_factor(
@@ -74,7 +74,7 @@ def run_spp_check(validator, normalized_data,data_str, raise_alert):
     if curr_spp > upper_limit:
 
         raise_alert(
-            f"[{data_str}] upper limit:{upper_limit:.2f} | current value:{curr_spp} | lower limit:{lower_limit:.2f} SPP is out of expected range",
+            f"[{data_str}] upper limit:{upper_limit:.2f} | current value:{curr_spp:.2f}{spp_unit} current spm:{curr_spm:.2f}{spm_unit} | lower limit:{lower_limit:.2f} SPP is out of expected range",
             subject="SPP_SPM_FACTOR",
             value="HIGH",
         )
@@ -82,7 +82,7 @@ def run_spp_check(validator, normalized_data,data_str, raise_alert):
     elif curr_spp < lower_limit:
 
         raise_alert(
-            f"[{data_str}] upper limit:{upper_limit:.2f} | current value:{curr_spp} current spm:{curr_spm}| lower limit:{lower_limit:.2f} SPP is out of expected range",
+            f"[{data_str}] upper limit:{upper_limit:.2f} | current value:{curr_spp:.2f}{spp_unit} current spm:{curr_spm:.2f}{spm_unit} | lower limit:{lower_limit:.2f} SPP is out of expected range",
             subject="SPP_SPM_FACTOR",
             value="LOW",
         )

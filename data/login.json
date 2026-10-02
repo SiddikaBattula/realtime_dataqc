@@ -1,0 +1,11 @@
+{
+    "siddika@ofiindia.com": {
+        "role": "RTOC_Team_Head",
+        "base_region": "mumbai",
+        "Password": "Ofi_rtoc@123"
+    },
+    "sushma@ofiindia.com": {
+        "role": "Base_head",
+        "Password": "base_head@123"
+    }
+}

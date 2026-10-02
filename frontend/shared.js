@@ -102,9 +102,10 @@ const apiReady = (async () => {
     console.info('This page is not served by the API; using ' + API_BASE);
 })();
 
+
+
 async function api(path, options) {
-    // Every call waits on the one probe above, so nothing has to be sequenced
-    // by hand in app.js or logs.js - they carry on calling api() as they did.
+
     await apiReady;
 
     const response = await fetch(API_BASE + path, {
@@ -112,12 +113,19 @@ async function api(path, options) {
         ...options,
     });
 
+    // Not signed in (or the role was removed / its password changed):
+    // go to the login page instead of showing "Request failed".
+    if (response.status === 401) {
+        location.href = API_BASE + '/login.html';
+        throw new Error('Signing in…');
+    }
+
     let body = null;
 
     try {
         body = await response.json();
     } catch (err) {
-        // A 500 from the server can come back as HTML; the status is enough.
+
     }
 
     if (!response.ok) {
@@ -158,7 +166,7 @@ const KINDS = [
     [/Please check for data Trans/i, 'critical'],
     [/increased by/i, 'critical'],
     [/Bit Depth jump by/i, 'critical'],
-    // TA and TG may carry display names, so only the shape is matched.
+
     [/Cannot determine activity/i, 'critical'],
     [/Unknown activity/i, 'critical'],
     [/remained unchanged/i, 'warn'],

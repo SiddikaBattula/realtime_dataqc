@@ -109,10 +109,9 @@ def run_zero_checks(validator, activity, normalized_data, raise_alert,
             continue
 
         value = normalized_data.get(param)
-
         if value is None or value <= 0:
             raise_alert(
-                f"[{date_str}] {validator.display_name(param)} cannot be 0 in {activity} where BD:{bit_depth}{depth_unit}, MD:{total_depth}{depth_unit}",
+                f"[{date_str}] {validator.display_name(param)} cannot be 0 in {activity} where BD:{bit_depth:.2f}{depth_unit}, MD:{total_depth:.2f}{depth_unit}",
                 param,
                 subject=f"ZERO:{param}",
                 value=activity,

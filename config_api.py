@@ -27,7 +27,7 @@ from typing import Optional
 from enum import Enum
 import json
 import time
-
+import auth
 from fastapi import Body, FastAPI, HTTPException, Path as PathParam, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -203,6 +203,8 @@ app = FastAPI(
     title="DataQC rule files",
     lifespan=lifespan,
 )
+
+auth.install(app) 
 
 # Serving the dashboard from here makes it same-origin, and none of this
 # applies. It is also normal to serve frontend/ from a separate static server

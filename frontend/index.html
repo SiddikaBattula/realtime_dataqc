@@ -22,7 +22,14 @@
                 <span id="link-text">Connecting</span>
             </div>
 
+            <div class="user-chip" id="user-chip" hidden>
+                <span id="user-name"></span>
+                <span class="user-role" id="user-role"></span>
+                <a class="btn" id="user-logout" href="/auth/logout">Sign out</a>
+            </div>
+
             <button class="btn" id="settings-open" type="button">
+
                 <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
                     <circle cx="12" cy="12" r="3" />
                     <path
@@ -127,7 +134,7 @@
                         <div class="group-body">
                             <div class="field-row">
                                 <label class="field">
-                                    <span>Database name</span>
+                                    <span>Well Name</span>
                                     <input type="text" id="database_name" placeholder="kj-16" required
                                         spellcheck="false">
                                 </label>

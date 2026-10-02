@@ -73,6 +73,7 @@ log = get_logger(__name__)
 # Parameters whose ranges "max" may be raised while the agent runs.
 ADJUSTABLE_MAX = ("HOOKLOAD", "SPP", "ROP", "WOB")
 
+
 def _stamp(path):
     """
     When a well's rule file was last written.
@@ -225,8 +226,8 @@ class RealtimeValidator:
                 pct = to_number(block.get("percentage_change"))
                 seconds = to_number(block.get("duration_seconds"))
             else:
-                pct = to_number(block.get("max_adjust_percentage"))
-                seconds = to_number(block.get("max_adjust_seconds"))
+                pct = to_number(block.get("percentage_change"))
+                seconds = to_number(block.get("duration_seconds"))
 
             if pct is None or seconds is None or seconds <= 0:
                 continue
@@ -661,6 +662,8 @@ class RealtimeValidator:
         total_depth = normalized_data.get("DEPTH")
         depth_unit = self.ranges.get("DEPTH", {}).get("unit", "")
         rop_unit = self.ranges.get("ROP",{}).get("unit","")
+        spp_unit = self.ranges.get("SPP",{}).get("unit","")
+        spm_unit = self.ranges.get("SPM",{}).get("unit","")
 
         # The pumps added up, once. The activity zero-check and the range
         # check below both ask for it, and nothing between them can change
@@ -703,7 +706,7 @@ class RealtimeValidator:
         # ------------------------------------------------------------------
         # 4. SPP alert
         # ------------------------------------------------------------------
-        run_spp_check(self, normalized_data,date_str, raise_alert)
+        run_spp_check(self, normalized_data,date_str, raise_alert,spp_unit,spm_unit)
 
         # ------------------------------------------------------------------
         # 6. ROP change

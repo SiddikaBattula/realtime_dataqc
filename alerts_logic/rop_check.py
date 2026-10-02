@@ -54,7 +54,7 @@ def run_rop_check(validator, normalized_data, raise_alert, date_str, bit_depth, 
     
     if percent_change > validator.rop_threshold:
         raise_alert(
-            f"[{date_str}] {validator.display_name('ROP')} increased by {percent_change:.2f}%({rop}{rop_unit}), BD:{bit_depth}{depth_unit}",
+            f"[{date_str}] {validator.display_name('ROP')} increased by {percent_change:.2f}%({rop:.2f}{rop_unit}), BD:{bit_depth:.2f}{depth_unit}",
             "ROP",
             subject="ROP_CHANGE",
             value=f"increased {percent_change:.2f}",

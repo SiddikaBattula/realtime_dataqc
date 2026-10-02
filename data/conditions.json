@@ -19,7 +19,7 @@
         "duration_seconds": 30
     },
     "WOB": {
-        "max_adjust_percentage": 20,
-        "max_adjust_seconds": 30
+        "percentage_change": 20,
+        "duration_seconds": 30
     }
 }

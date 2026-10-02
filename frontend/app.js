@@ -66,6 +66,29 @@ const S = {
     maxSpan: 4,
 };
 
+
+const auth = { user: null };
+const can = (permission) => Boolean(auth.user && auth.user.permissions.includes(permission));
+
+
+async function loadUser() {
+    auth.user = await api('/auth/me');
+
+    document.getElementById('user-name').textContent = auth.user.email;
+    document.getElementById('user-role').textContent =
+        auth.user.role.replaceAll('_', ' ')
+        + (auth.user.base_region ? ' · ' + auth.user.base_region : '');
+    document.getElementById('user-logout').href = API_BASE + '/auth/logout';
+    document.getElementById('user-chip').hidden = false;
+
+    const anySettings = ['add_well', 'display_names', 'email_settings'].some(can);
+
+    document.body.toggleAttribute('data-no-settings', !anySettings);
+    document.body.toggleAttribute('data-no-edit', !can('edit_rules'));
+}
+
+
+
 /*
   Ask the server what it was configured with.
 
@@ -357,6 +380,7 @@ function showActivity(card, activity) {
 }
 
 
+
 function buildCard(well) {
     const card = el.tplWell.content.firstElementChild.cloneNode(true);
 
@@ -372,7 +396,18 @@ function buildCard(well) {
         'click', () => openModal(well.database_name),
     );
 
+    // NEW: logs button (needs the .well-logs button added to #tpl-well)
+    const logsBtn = card.querySelector('.well-logs');
+
+    if (logsBtn) {
+        logsBtn.hidden = !can('view_logs');
+        logsBtn.addEventListener('click', () => openLogs(well.database_name));
+    }
+
+
+    // NEW: hide the stop button for roles without stop_well
     const remove = card.querySelector('.well-remove');
+    // remove.hidden = !can('stop_well');
 
     // First click arms it ("Stop?"), a second within three seconds confirms.
     // No browser dialog, and one stray click cannot stop a well.
@@ -1135,6 +1170,7 @@ async function openModal(name) {
     // beside the rules, so an edited IP is kept rather than silently dropped
     // the way it used to be.
     el.dbName.disabled = Boolean(editing);
+    el.ipAddress.disabled = Boolean(editing);
 
     // The base region is a Settings field only. Under a well's pencil the
     // form is about how that rig is checked, and which base it belongs to is
@@ -1265,7 +1301,7 @@ el.form.addEventListener('submit', async (event) => {
         }
 
         closeModal();
-        startPolling();
+        loadUser().then(startPolling);
     } catch (err) {
         // The API says which block and which parameter is wrong, so it is
         // shown against the form rather than in a toast that disappears.
@@ -1398,8 +1434,8 @@ document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
         clearTimeout(polling);
     } else {
-        startPolling();
+        loadUser().then(startPolling);
     }
 });
 
-startPolling();
+loadUser().then(startPolling);

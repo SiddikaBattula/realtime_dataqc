@@ -29,6 +29,9 @@ def run_range_checks(validator, normalized_data, raise_alert, date_str,
             if value is None:
                 continue
 
+        if param=="HOOKLOAD" and value==0:
+            continue
+
         # min, max and factor are tolerated as strings in the file
         # ("60"), so they are coerced here rather than compared raw -
         # comparing a float against a str is a TypeError, and it would
@@ -70,7 +73,7 @@ def run_range_checks(validator, normalized_data, raise_alert, date_str,
 
         if value < min_val:
             raise_alert(
-                f"[{date_str}] {validator.display_name(param)} : {value:.2f}{unit} below limit {min_text}{unit} BD : {bit_depth}{depth_unit} ",
+                f"[{date_str}] {validator.display_name(param)} : {value:.2f}{unit} below limit {min_text}{unit} BD : {bit_depth:.2f}{depth_unit} ",
                 param,
                 subject=f"RANGE:{param}",
                 value=f"below {value:.2f}",
@@ -82,7 +85,7 @@ def run_range_checks(validator, normalized_data, raise_alert, date_str,
 
         elif value > max_val:
             raise_alert(
-                f"[{date_str}] {validator.display_name(param)} : {value:.2f}{unit} above limit {max_text}{unit}  BD : {bit_depth}{depth_unit}",
+                f"[{date_str}] {validator.display_name(param)} : {value:.2f}{unit} above limit {max_text}{unit}  BD : {bit_depth:.2f}{depth_unit}",
                 param,
                 subject=f"RANGE:{param}",
                 value=f"above {value:.2f}",

@@ -30,6 +30,7 @@ def run_hookload_check(validator, normalized_data, raise_alert, date_str, now):
                 f"[{date_str}] Please check for data Trans. {validator.display_name('HOOKLOAD')} has remained unchanged for {int(elapsed)} seconds",
                 "HOOKLOAD",
                 subject="HOOKLOAD_STUCK",
+                value=current_time.timestamp(),
                 why=validator.alert_log.stuck_reason(
                     "HOOKLOAD", hookload, elapsed, validator.hookload_duration,
                 ),
