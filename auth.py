@@ -35,7 +35,7 @@ LOGIN_FILE = Path(Config.DATA_DIR) / "login.json"
 # ---------------------------------------------------------------------------
 
 _HEAD = {"view", "view_logs", "edit_rules", "add_well", "stop_well",
-         "display_names", "email_settings"}
+         "display_names", "email_settings","add_user"}
 
 ROLE_PERMISSIONS = {
     "rtoc_team_head": set(_HEAD),

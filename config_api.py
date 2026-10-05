@@ -285,16 +285,22 @@ def add_well(well: WellRequest):
     range or an activity flag naming a parameter the well's column mapping
     does not have is refused here, with a sentence saying which.
 
-    Sending the same database_name again replaces that well's record; its
-    agent picks the new rules up within a second, without restarting.
+    A database_name already monitored - in any case, with or without spaces
+    around it - is refused with a 409. Change an existing well with
+    PUT /wells/{name}/rules instead.
     """
     rules = well.rules if well.rules is not None else _guard(well_rules.template)
 
-    record = _guard(
-        lambda: well_registry.add(
-            well.database_name, well.ip_address, rules, well.region
+    try:
+        record = _guard(
+            lambda: well_registry.add_new(
+                well.database_name.strip(), well.ip_address, rules, well.region
+            )
         )
-    )
+
+    except well_registry.DuplicateWell as exc:
+        log.warning("Rejected: %s", exc)
+        raise HTTPException(status_code=409, detail=str(exc))
 
     log.info(
         "Well added: %s (%s)%s",

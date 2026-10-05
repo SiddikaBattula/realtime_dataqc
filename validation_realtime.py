@@ -33,6 +33,7 @@ Parameters are referred to by logical name throughout (SPP, ROP, HOOKLOAD
 ...); ColumnMapper is what turns those into this table's columns.
 """
 
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -160,7 +161,11 @@ class RealtimeValidator:
         self.previous_hookload_time = None
         self.hookload_samples = []
 
-        self.hookload_alerted = False
+        # Active alert state
+        self.hookload_alert_active = False
+        self.hookload_last_alert_time = None
+
+        
 
 
         # What the last reading was called, so a change of activity is logged
@@ -692,21 +697,21 @@ class RealtimeValidator:
         # ------------------------------------------------------------------
         # 2. Ranges
         # ------------------------------------------------------------------
-        self.update_adaptive_maxes(normalized_data, now)
-        run_range_checks(
-            self, normalized_data, raise_alert, date_str,
-            bit_depth, depth_unit, total_spm,
-        )
+        # self.update_adaptive_maxes(normalized_data, now)
+        # run_range_checks(
+        #     self, normalized_data, raise_alert, date_str,
+        #     bit_depth, depth_unit, total_spm,
+        # )
 
         # ------------------------------------------------------------------
         # 3. TA > TG
         # ------------------------------------------------------------------
-        run_ta_tg_check(self, normalized_data, raise_alert, date_str, bit_depth, now)
+        # run_ta_tg_check(self, normalized_data, raise_alert, date_str, bit_depth, now)
 
         # ------------------------------------------------------------------
         # 4. SPP alert
         # ------------------------------------------------------------------
-        run_spp_check(self, normalized_data,date_str, raise_alert,spp_unit,spm_unit)
+        # run_spp_check(self, normalized_data,date_str, raise_alert,spp_unit,spm_unit)
 
         # ------------------------------------------------------------------
         # 6. ROP change
@@ -718,7 +723,7 @@ class RealtimeValidator:
         # ------------------------------------------------------------------
         # 7. Hookload unchanged
         # ------------------------------------------------------------------
-        run_hookload_check(self, normalized_data, raise_alert, date_str, now)
+        # run_hookload_check(self, normalized_data, raise_alert, date_str, now)
 
         # ------------------------------------------------------------------
         # Depth Jump alert
@@ -741,7 +746,19 @@ class RealtimeValidator:
 
         # A problem that has gone away has cleared: if it comes back, even
         # saying exactly the same thing, that is a new alert.
+        # for subject in list(self._last_alerted):
+        #     if subject not in raised and subject not in EVENT_SUBJECTS:
+        #         del self._last_alerted[subject]
+
+
         for subject in list(self._last_alerted):
+
+            if (
+                subject == "HOOKLOAD_STUCK"
+                and self.hookload_alert_active
+            ):
+                continue
+
             if subject not in raised and subject not in EVENT_SUBJECTS:
                 del self._last_alerted[subject]
 

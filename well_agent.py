@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pymysql
 
+import well_depths
 import well_registry
 import well_rules
 from config import Config
@@ -29,6 +30,14 @@ from mysql_client import MySQLClient
 from validation_realtime import alert_raised_at, build_validator
 
 log = get_logger(__name__)
+
+# The failures that mean the rig cannot be reached, as opposed to a bug in a
+# check: these are a one-line warning, and they blank the card's depths.
+UNREACHABLE = (
+    pymysql.err.OperationalError,
+    pymysql.err.InterfaceError,
+    OSError,
+)
 
 
 class WellAgent:
@@ -133,6 +142,10 @@ class WellAgent:
 
                 self._recovered()
 
+                # Every read, changed row or not and before any check runs, so
+                # the card shows the live depths with or without alerts.
+                well_depths.publish(self.database_name, self.validator, row)
+
                 snapshot = json.dumps(row, sort_keys=True, default=str)
 
                 # An unchanged row is the same reading arriving twice, not a
@@ -146,14 +159,6 @@ class WellAgent:
 
                     self.current_activity = result.activity
                     self._standing = result.standing
-
-                    # For the card header: BD and TD of the reading just checked.
-                    well_registry.set_depths(
-                        self.database_name,
-                        result.normalized.get("BIT_DPT_MD"),
-                        result.normalized.get("DEPTH"),
-                        self.validator.ranges.get("DEPTH", {}).get("unit", ""),
-                    )
 
                     self.save_alerts(result.alerts)
 
@@ -173,7 +178,11 @@ class WellAgent:
                 # Not reading, so not knowing: a stale DRILLING on the card
                 # would say the rig is on bottom when nobody can see it.
                 well_registry.set_activity(self.database_name, None)
-                well_registry.set_depths(self.database_name, None, None)
+
+                # Only when the rig itself is gone. A check that raised says
+                # nothing about the depths just read, which stay on the card.
+                if isinstance(exc, UNREACHABLE):
+                    well_depths.clear(self.database_name)
 
                 self._disconnect()
 
@@ -285,13 +294,7 @@ class WellAgent:
 
         self._last_failure = [signature, 1]
 
-        unreachable = (
-            pymysql.err.OperationalError,
-            pymysql.err.InterfaceError,
-            OSError,
-        )
-
-        if isinstance(exc, unreachable):
+        if isinstance(exc, UNREACHABLE):
             self.log.warning(
                 "cannot read %s at %s:%s - %s: %s. Retrying every %gs",
                 self.database_name, self.ip_address, Config.DB_PORT,

@@ -499,7 +499,7 @@ function updateCard(card, state, alerts) {
     card.dataset.blank = '1';
     list.replaceChildren();
 
-    card.querySelector('.well-count').textContent = starting ? 'starting' : 'clear';
+    card.querySelector('.well-count').textContent = starting ? 'starting' : '';
     blank.textContent = starting
         ? 'Connecting to the well…'
         : 'Monitoring — nothing out of range';
@@ -1265,10 +1265,15 @@ el.form.addEventListener('submit', async (event) => {
 
     // POST /wells with a name already monitored replaces that well's rules
     // with this form - which opened on the template, not on its own rules.
-    // Changing an existing well is what its pencil is for.
-    if (!editing && cards.has(database_name)) {
+    // Changing an existing well is what its pencil is for. Case is ignored:
+    // "DK-1123" and "dk-1123" are the same rig. The server refuses it too.
+    const existing = [...cards.keys()].find(
+        (name) => name.trim().toLowerCase() === database_name.toLowerCase(),
+    );
+
+    if (!editing && existing) {
         showError(
-            database_name + ' is already being monitored. Adding it again would replace '
+            existing + ' is already being monitored. Adding it again would replace '
             + 'its rules with the defaults in this form - to change them, use the '
             + 'pencil on its card.',
         );

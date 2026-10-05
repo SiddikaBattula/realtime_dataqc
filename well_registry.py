@@ -62,6 +62,47 @@ def add(database_name, ip_address, rules, region=""):
     return record
 
 
+class DuplicateWell(Exception):
+    """A well being added is already monitored, under this name or another case of it."""
+
+
+def find(database_name):
+    """
+    The name a well is monitored under, matching case and surrounding spaces
+    loosely, or None.
+
+    "DK-1123" and "dk-1123" are one rig - and on Windows one file in
+    data/wells/ - so they have to be one well, not two cards.
+    """
+    key = str(database_name).strip().casefold()
+
+    with _LOCK:
+        for name in _WELLS:
+            if name.strip().casefold() == key:
+                return name
+
+    return None
+
+
+def add_new(database_name, ip_address, rules, region=""):
+    """
+    add(), refusing a well that is already monitored.
+
+    The check and the add are one step under the lock, so two people adding
+    the same well at the same moment cannot both get through.
+    """
+    with _LOCK:
+        existing = find(database_name)
+
+        if existing is not None:
+            raise DuplicateWell(
+                f"{existing} is already being monitored. To change its rules, "
+                "use the pencil on its card."
+            )
+
+        return add(database_name, ip_address, rules, region)
+
+
 def remove(database_name):
     """Drop a well and its file. True if it was there."""
     with _LOCK:

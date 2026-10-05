@@ -1,7 +1,7 @@
 {
-    "database_name": "kj-16",
+    "database_name": "KAAN-2",
     "ip_address": "43.241.39.241",
-    "region": "",
+    "region": "Mumbai",
     "rules": {
         "activity": {
             "DRILLING": {
@@ -296,8 +296,8 @@
                 "factor": 1
             }
         },
-        "drilling_criteria": 0.1,
-        "bd_threshold_drilling": 0.01,
-        "bd_threshold_non_drilling": 5
+        "drilling_criteria": 0.01,
+        "bd_threshold_drilling": 10,
+        "bd_threshold_non_drilling": 30
     }
 }

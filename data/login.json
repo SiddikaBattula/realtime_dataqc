@@ -13,5 +13,25 @@
         "role": "RTOC_Team_Member",
         "Password": "yogi@123",
         "base_region": "mumbai"
+    },
+    "henloy@ofiindia.com": {
+        "role": "RTOC_Team_Head",
+        "Password": "rtoc@123",
+        "base_region": "mumbai"
+    },
+    "qatarbase@ofiindia.com": {
+        "role": "Base_head",
+        "Password": "base@123",
+        "base_region": "qatar"
+    },
+    "delhibase@ofiindia.com": {
+        "role": "Base_head",
+        "Password": "base@123",
+        "base_region": "dehli"
+    },
+    "rtoc@ofiindia.com": {
+        "role": "RTOC_Team_Member",
+        "Password": "rtoc@123",
+        "base_region": "mumbai"
     }
 }

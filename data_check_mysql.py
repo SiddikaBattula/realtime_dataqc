@@ -26,7 +26,7 @@ cursor = conn.cursor()
 # cursor.execute("DELETE FROM dataqcalert")
 # cursor.execute("SELECT * FROM drilling WHERE TOT_DPT_MD = 1445.5")
 # cursor.execute("SHOW TABLES FROM `dk-1140-1-wc`;")
-# cursor.execute("SHOW COLUMNS FROM timebaselastrecord")
+
 # cursor.execute("SELECT * FROM drilling LIMIT 5")
 # cursor.execute("""
 #     SELECT *
@@ -42,20 +42,21 @@ cursor = conn.cursor()
 # cursor.execute("SELECT TOT_DPT_MD FROM drilling WHERE TOT_DPT_MD BETWEEN 1484.00 AND 1512")
 # cursor.execute("SELECT Rdtime,TOT_DPT_MD,ROP FROM drilling WHERE TOT_DPT_MD BETWEEN 1257.0 AND 1260.0")
 
-cursor.execute("SELECT * FROM timebaselastrecord LIMIT 1")
+# cursor.execute("SELECT * FROM timebaselastrecord LIMIT 1")
 
-row = cursor.fetchone()
+# row = cursor.fetchone()
 
-columns = [col[0] for col in cursor.description]
+# columns = [col[0] for col in cursor.description]
 
-for column, value in zip(columns, row):
-    print(f"{column}: {value}")
+# for column, value in zip(columns, row):
+#     print(f"{column}: {value}")
 
+
+cursor.execute("SELECT ROP FROM timebaselastrecord")
 rows = cursor.fetchall()
 
-
 for row in rows:
-    print(row)
+    print(row[0])
 
 
 conn.close()
