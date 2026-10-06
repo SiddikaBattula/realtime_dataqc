@@ -163,7 +163,8 @@ function parseAlert(raw) {
   the colour of the row's edge - enough to scan a card without reading it.
 */
 const KINDS = [
-    [/Please check for data Trans/i, 'critical'],
+    // [/Please check for data Trans/i, 'critical'],
+    [/Please check the data field/i, 'critical'],
     [/increased by/i, 'critical'],
     [/Bit Depth jump by/i, 'critical'],
 

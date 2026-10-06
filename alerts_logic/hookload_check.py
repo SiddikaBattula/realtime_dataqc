@@ -145,17 +145,19 @@ def run_hookload_check(validator, normalized_data, raise_alert, date_str, now):
     # Not alerting yet
     if not validator.hookload_alert_active:
 
+
         if elapsed < validator.hookload_duration:
             return
 
         message = (
-            f"[{date_str}] Please check for data Trans. {name} has remained "
-            f"unchanged at {hookload} for {int(elapsed)} seconds"
+            f"[{date_str}] Realtime data feed has stopped "
+            f"for the last {int(elapsed)} sec."
         )
         validator.hookload_alert_active = True
         validator.hookload_last_alert_time = now
         validator.hookload_alert_token = f"ACTIVE-{now.timestamp()}"
         validator.hookload_alert_message = message
+
 
         validator.log.warning(
             "HOOKLOAD_STUCK RAISED | value=%s | unchanged for %ss (limit %ss) | since %s",
@@ -176,8 +178,8 @@ def run_hookload_check(validator, normalized_data, raise_alert, date_str, now):
 
     if since_alert >= REALERT_SECONDS:
         message = (
-            f"[{date_str}] Please check for data Trans. {name} is STILL unchanged "
-            f"at {hookload} - stuck for {int(elapsed // 60)} minutes"
+            f"[{date_str}] Check in data feed. {name} is STILL unchanged "
+            f"at {hookload} - stuck for {int(elapsed // 60)} min"
         )
         validator.hookload_last_alert_time = now
         validator.hookload_alert_token = f"ACTIVE-{now.timestamp()}"   # new token = new alert

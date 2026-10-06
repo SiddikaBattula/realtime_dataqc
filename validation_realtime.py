@@ -153,8 +153,13 @@ class RealtimeValidator:
         # Factor refresh interval
         self.spp_factor_duration = 60.0
 
+        # ROP monitoring
+        self.rop_values = []
+        self.rop_window_start = None
         self.previous_rop = None
         self.previous_rop_time = None
+        self.rop_history = deque()
+
 
         # Hookload monitoring
         self.previous_hookload = None
@@ -697,21 +702,21 @@ class RealtimeValidator:
         # ------------------------------------------------------------------
         # 2. Ranges
         # ------------------------------------------------------------------
-        # self.update_adaptive_maxes(normalized_data, now)
-        # run_range_checks(
-        #     self, normalized_data, raise_alert, date_str,
-        #     bit_depth, depth_unit, total_spm,
-        # )
+        self.update_adaptive_maxes(normalized_data, now)
+        run_range_checks(
+            self, normalized_data, raise_alert, date_str,
+            bit_depth, depth_unit, total_spm,
+        )
 
         # ------------------------------------------------------------------
         # 3. TA > TG
         # ------------------------------------------------------------------
-        # run_ta_tg_check(self, normalized_data, raise_alert, date_str, bit_depth, now)
+        run_ta_tg_check(self, normalized_data, raise_alert, date_str, bit_depth, now)
 
         # ------------------------------------------------------------------
         # 4. SPP alert
         # ------------------------------------------------------------------
-        # run_spp_check(self, normalized_data,date_str, raise_alert,spp_unit,spm_unit)
+        run_spp_check(self, normalized_data,date_str, raise_alert,spp_unit,spm_unit)
 
         # ------------------------------------------------------------------
         # 6. ROP change
@@ -723,7 +728,7 @@ class RealtimeValidator:
         # ------------------------------------------------------------------
         # 7. Hookload unchanged
         # ------------------------------------------------------------------
-        # run_hookload_check(self, normalized_data, raise_alert, date_str, now)
+        run_hookload_check(self, normalized_data, raise_alert, date_str, now)
 
         # ------------------------------------------------------------------
         # Depth Jump alert

@@ -349,6 +349,7 @@ _NUM = r"[-+]?\d+(?:\.\d+)?"
 EVENT_PATTERNS = [
     re.compile(r"increased by", re.I),
     re.compile(r"Bit Depth jump by", re.I),
+    re.compile(r"cannot be 0")
 ]
 
 # The three messages hookload_check.py writes.

@@ -1,7 +1,7 @@
 {
-    "database_name": "KAAN-2",
+    "database_name": "dk-1189",
     "ip_address": "43.241.39.241",
-    "region": "Mumbai",
+    "region": "",
     "rules": {
         "activity": {
             "DRILLING": {
@@ -187,11 +187,11 @@
             },
             "ROP": {
                 "percentage_change": 20,
-                "duration_seconds": 5
+                "duration_seconds": 60
             },
             "HOOKLOAD": {
                 "percentage_change": 20,
-                "duration_seconds": 30
+                "duration_seconds": 60
             },
             "WOB": {
                 "percentage_change": 20,

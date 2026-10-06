@@ -13,7 +13,7 @@ conn = pymysql.connect(
     user=os.getenv("DB_USERNAME"),
     password=os.getenv("DB_PASSWORD"),
     port=int(os.getenv("DB_PORT")),
-    database="kj-16",           #"mndwo181hdb_1(m",
+    database="bgw-59",           #"mndwo181hdb_1(m",
     charset="utf8",
 )
 
@@ -52,11 +52,14 @@ cursor = conn.cursor()
 #     print(f"{column}: {value}")
 
 
-cursor.execute("SELECT ROP FROM timebaselastrecord")
+cursor.execute("SELECT * FROM timebaselastrecord")
+
 rows = cursor.fetchall()
 
 for row in rows:
-    print(row[0])
+    print(row)
+
+
 
 
 conn.close()

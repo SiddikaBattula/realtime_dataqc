@@ -94,6 +94,18 @@ h1 {
     color: var(--blue);
 }
 
+
+.toolbar .chip[data-tone="critical"] {
+    border-color: var(--red);
+    color: #FF8FA3;
+}
+
+.toolbar .chip[data-tone="info"] {
+    border-color: var(--amber);
+    color: #FFCB70;
+}
+
+
 /* ---- the log --------------------------------------------------------- */
 
 main {
@@ -197,4 +209,26 @@ main {
 
 .empty-msg[data-tone="error"] {
     color: var(--red);
+}
+
+.title-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: 0 0 10px;
+}
+
+h1 {
+    margin: 0;
+    /* spacing now comes from .title-row */
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -.01em;
+}
+
+.note {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-2);
 }

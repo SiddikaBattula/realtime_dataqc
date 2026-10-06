@@ -73,18 +73,30 @@ def run_spp_check(validator, normalized_data,data_str, raise_alert,spp_unit,spm_
 
     if curr_spp > upper_limit:
 
+        # raise_alert(
+        #     f"[{data_str}] upper limit:{upper_limit:.2f} | current value:{curr_spp:.2f}{spp_unit} current spm:{curr_spm:.2f}{spm_unit} | lower limit:{lower_limit:.2f} SPP is out of expected range",
+        #     subject="SPP_SPM_FACTOR",
+        #     value="HIGH",
+        # )
+
         raise_alert(
-            f"[{data_str}] upper limit:{upper_limit:.2f} | current value:{curr_spp:.2f}{spp_unit} current spm:{curr_spm:.2f}{spm_unit} | lower limit:{lower_limit:.2f} SPP is out of expected range",
+            f"[{data_str}] SPP out of range.",
             subject="SPP_SPM_FACTOR",
             value="HIGH",
         )
 
     elif curr_spp < lower_limit:
 
+        # raise_alert(
+        #     f"[{data_str}] upper limit:{upper_limit:.2f} | current value:{curr_spp:.2f}{spp_unit} current spm:{curr_spm:.2f}{spm_unit} | lower limit:{lower_limit:.2f} SPP is out of expected range",
+        #     subject="SPP_SPM_FACTOR",
+        #     value="LOW",
+        # )
+
         raise_alert(
-            f"[{data_str}] upper limit:{upper_limit:.2f} | current value:{curr_spp:.2f}{spp_unit} current spm:{curr_spm:.2f}{spm_unit} | lower limit:{lower_limit:.2f} SPP is out of expected range",
+            f"[{data_str}] SPP out of range.",
             subject="SPP_SPM_FACTOR",
-            value="LOW",
+            value="HIGH",
         )
 
     else:

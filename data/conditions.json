@@ -12,7 +12,7 @@
     },
     "ROP": {
         "percentage_change": 20,
-        "duration_seconds": 10
+        "duration_seconds": 60
     },
     "HOOKLOAD": {
         "percentage_change": 20,

@@ -21,13 +21,16 @@
 
 <body>
     <header>
-        <h1><span id="well-name">Loading…</span></h1>
+        <div class="title-row">
+            <h1><span id="well-name">Loading…</span></h1>
+            <span class="note">(Showing alerts from the last 24 hours)</span>
+        </div>
 
         <div class="toolbar">
-            <input id="filter" type="text" placeholder="13:50 or 13:50-13:55">
+            <input id="filter" type="text" placeholder="HH:MM:SS">
             <span class="chip" data-tone="critical">Critical</span>
-            <span class="chip" data-tone="warn">Warning</span>
-            <span class="chip" data-tone="info">Info</span>
+            <!-- <span class="chip" data-tone="warn">Warning</span> -->
+            <span class="chip" data-tone="info">Warning</span>
         </div>
     </header>
 
