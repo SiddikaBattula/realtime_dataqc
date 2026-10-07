@@ -185,22 +185,102 @@ let polling = null;
   text, which carries its own timestamp, plus a count in case the same text
   was ever saved twice - so the card can add new lines without redrawing the
   ones already on it.
+// */
+// function listAlerts(raw) {
+//     const seen = new Map();
+
+//     const alerts = raw.map((entry) => {
+//         const text = String(entry);
+//         const occurrence = (seen.get(text) || 0) + 1;
+
+//         seen.set(text, occurrence);
+
+//         const { time, message } = parseAlert(text);
+
+//         return { key: text + '#' + occurrence, time, message, ...classify(message) };
+//     });
+
+//     return alerts.reverse();
+// }
+
+
+/*
+  An alert that says "... from 120s" is one ongoing condition, not a new
+  event each time. Series key = "CO2|above". Later readings replace earlier
+  ones, and the row moves to the position of the latest reading.
 */
+// "Co2 : 72.44% above limit 0.5% from 107s"
+const SERIES_RE = /^(.*?) : [-\d.]+\S*\s+(above|below) limit .*? from \d+s\b/;
+
+// "SPP out of range from 25s"
+const SPP_RE = /^(.*?) out of range from \d+s\b/;
+
+function seriesKey(message) {
+    const m = SERIES_RE.exec(message);
+    if (m) return m[1] + '|' + m[2];
+
+    const s = SPP_RE.exec(message);
+    if (s) return s[1] + '|range';
+
+    return null;
+}
+
 function listAlerts(raw) {
     const seen = new Map();
+    const items = new Map();   // insertion order = display order (oldest first)
 
-    const alerts = raw.map((entry) => {
+    for (const entry of raw) {
         const text = String(entry);
-        const occurrence = (seen.get(text) || 0) + 1;
-
-        seen.set(text, occurrence);
-
         const { time, message } = parseAlert(text);
+        const series = seriesKey(message);
 
-        return { key: text + '#' + occurrence, time, message, ...classify(message) };
+        let key;
+        if (series) {
+            key = 'series:' + series;
+        } else {
+            const n = (seen.get(text) || 0) + 1;
+            seen.set(text, n);
+            key = text + '#' + n;
+        }
+
+        items.delete(key);   // re-insert so the latest reading sorts last
+        items.set(key, { key, time, message, ...classify(message) });
+    }
+
+    return [...items.values()].reverse();   // newest first
+}
+
+function renderAlerts(list, alerts) {
+    const existing = new Map([...list.children].map((row) => [row.dataset.key, row]));
+    const wanted = new Set(alerts.map((a) => a.key));
+
+    for (const [key, row] of existing) {
+        if (!wanted.has(key)) {
+            row.remove();
+            existing.delete(key);
+        }
+    }
+
+    alerts.forEach((alert, position) => {
+        let row = existing.get(alert.key);
+
+        if (!row) {
+            row = alertRow(alert);            // new: gets the entry animation
+        } else {
+            // Same alert, newer reading: update text in place, no re-animation.
+            if (row.dataset.sig !== alert.time + alert.message) {
+                row.querySelector('.alert-time').textContent = alert.time;
+                row.querySelector('.alert-msg').textContent = alert.message;
+            }
+            row.dataset.tone = alert.tone;
+        }
+
+        row.dataset.sig = alert.time + alert.message;
+
+        if (list.children[position] !== row) {
+            list.insertBefore(row, list.children[position] || null);
+        }
     });
-
-    return alerts.reverse();
 }
 
 const WORST = { critical: 3, warn: 2, info: 1 };
@@ -447,30 +527,30 @@ function alertRow(alert) {
   off the bottom. Rebuilding the whole list instead would replay every row's
   entry animation each time one alert arrived, and jump a card someone is
   scrolled down in.
-*/
-function renderAlerts(list, alerts) {
-    const wanted = new Set(alerts.map((alert) => alert.key));
+// */
+// function renderAlerts(list, alerts) {
+//     const wanted = new Set(alerts.map((alert) => alert.key));
 
-    for (const row of [...list.children]) {
-        if (!wanted.has(row.dataset.key)) {
-            row.remove();
-        }
-    }
+//     for (const row of [...list.children]) {
+//         if (!wanted.has(row.dataset.key)) {
+//             row.remove();
+//         }
+//     }
 
-    alerts.forEach((alert, position) => {
-        const current = list.children[position];
+//     alerts.forEach((alert, position) => {
+//         const current = list.children[position];
 
-        if (!current || current.dataset.key !== alert.key) {
-            list.insertBefore(alertRow(alert), current || null);
-        }
-    });
+//         if (!current || current.dataset.key !== alert.key) {
+//             list.insertBefore(alertRow(alert), current || null);
+//         }
+//     });
 
-    // Every position up to alerts.length now holds the right row, so anything
-    // past it is left over from an out-of-order file and can go.
-    while (list.children.length > alerts.length) {
-        list.lastElementChild.remove();
-    }
-}
+//     // Every position up to alerts.length now holds the right row, so anything
+//     // past it is left over from an out-of-order file and can go.
+//     while (list.children.length > alerts.length) {
+//         list.lastElementChild.remove();
+//     }
+// }
 
 
 

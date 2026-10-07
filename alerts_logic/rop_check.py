@@ -133,9 +133,7 @@ def run_rop_check(
 
     avg_rop = sum(values) / len(values)
 
-    threshold_value = avg_rop + (
-        avg_rop * validator.rop_threshold / 100
-    )
+    threshold_value = avg_rop + validator.rop_threshold
 
     validator.log.info(
         "ROP Avg=%.2f Current=%.2f Threshold=%.2f Duration=%ss",

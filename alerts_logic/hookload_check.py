@@ -117,7 +117,7 @@ def run_hookload_check(validator, normalized_data, raise_alert, date_str, now):
             )
 
             raise_alert(
-                f"[{date_str}] {name} alert resolved - value is changing again "
+                f"[{date_str}] Realtime data feed has resumed"
                 f"(was stuck at {stuck_value} for {stuck_for} seconds, now {hookload})",
                 "HOOKLOAD",
                 subject="HOOKLOAD_RESOLVED",
@@ -125,6 +125,7 @@ def run_hookload_check(validator, normalized_data, raise_alert, date_str, now):
                 why=f"HOOKLOAD moved from {stuck_value} to {hookload} after "
                     f"{stuck_for}s unchanged",
             )
+
 
         validator.previous_hookload = hookload
         validator.previous_hookload_time = now

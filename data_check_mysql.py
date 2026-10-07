@@ -13,7 +13,7 @@ conn = pymysql.connect(
     user=os.getenv("DB_USERNAME"),
     password=os.getenv("DB_PASSWORD"),
     port=int(os.getenv("DB_PORT")),
-    database="bgw-59",           #"mndwo181hdb_1(m",
+    database="kj-17",           #"mndwo181hdb_1(m",
     charset="utf8",
 )
 
@@ -42,22 +42,22 @@ cursor = conn.cursor()
 # cursor.execute("SELECT TOT_DPT_MD FROM drilling WHERE TOT_DPT_MD BETWEEN 1484.00 AND 1512")
 # cursor.execute("SELECT Rdtime,TOT_DPT_MD,ROP FROM drilling WHERE TOT_DPT_MD BETWEEN 1257.0 AND 1260.0")
 
-# cursor.execute("SELECT * FROM timebaselastrecord LIMIT 1")
+cursor.execute("SELECT * FROM timebaselastrecord LIMIT 1")
 
-# row = cursor.fetchone()
+row = cursor.fetchone()
 
-# columns = [col[0] for col in cursor.description]
+columns = [col[0] for col in cursor.description]
 
-# for column, value in zip(columns, row):
-#     print(f"{column}: {value}")
+for column, value in zip(columns, row):
+    print(f"{column}: {value}")
 
 
-cursor.execute("SELECT * FROM timebaselastrecord")
+# cursor.execute("SELECT * FROM timebaselastrecord")
 
-rows = cursor.fetchall()
+# rows = cursor.fetchall()
 
-for row in rows:
-    print(row)
+# for row in rows:
+#     print(row)
 
 
 

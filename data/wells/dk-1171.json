@@ -1,5 +1,5 @@
 {
-    "database_name": "dk-1189",
+    "database_name": "dk-1171",
     "ip_address": "43.241.39.241",
     "region": "",
     "rules": {
@@ -178,7 +178,7 @@
                 "duration_seconds": 90
             },
             "SPP": {
-                "percentage_change": 1,
+                "percentage_change": 5,
                 "duration_seconds": 5
             },
             "SPM": {
@@ -213,7 +213,7 @@
             },
             "HOOKLOAD": {
                 "min": 10,
-                "max": 200,
+                "max": 283.35,
                 "unit": "kflb",
                 "factor": 2.268
             },

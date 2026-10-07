@@ -11,14 +11,16 @@
   Used by login.html and the dashboard's Add person form.
 */
 
-(function () {
-    const masked = window.CSS && CSS.supports('-webkit-text-security', 'disc');
 
-    for (const input of document.querySelectorAll('input[data-secret]')) {
-        input.type = masked ? 'text' : 'password';
-        input.autocomplete = 'off';
-        input.spellcheck = false;
-        input.autocapitalize = 'off';
-        input.classList.add('secret-input');
-    }
+(function () {
+  const masked = window.CSS && CSS.supports('-webkit-text-security', 'disc');
+
+  for (const input of document.querySelectorAll('input[data-secret]')) {
+    input.type = masked ? 'text' : 'password';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.autocapitalize = 'off';
+    input.classList.add('secret-input');
+  }
 })();
+

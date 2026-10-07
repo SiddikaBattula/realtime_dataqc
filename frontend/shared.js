@@ -167,7 +167,7 @@ const KINDS = [
     [/Please check the data field/i, 'critical'],
     [/increased by/i, 'critical'],
     [/Bit Depth jump by/i, 'critical'],
-
+    [/Realtime data feed has stopped/i, 'critical'],
     [/Cannot determine activity/i, 'critical'],
     [/Unknown activity/i, 'critical'],
     [/remained unchanged/i, 'warn'],
