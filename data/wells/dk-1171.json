@@ -213,7 +213,7 @@
             },
             "HOOKLOAD": {
                 "min": 10,
-                "max": 283.35,
+                "max": 284.61,
                 "unit": "kflb",
                 "factor": 2.268
             },

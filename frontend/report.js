@@ -579,17 +579,91 @@
             .observe(logsBtn, { attributes: true, attributeFilter: ['hidden'] });
 
         btn.addEventListener('click', async () => {
-            well = document.getElementById('database_name').value.trim();
-            document.getElementById('report-title').textContent = `Report — ${well}`;
-            body.innerHTML = '<p class="modal-intro">Loading…</p>';
-            modal.hidden = false;
+            const well = document.getElementById('database_name').value.trim();
+
             try {
                 const data = await api(alertsUrl(well));
-                rows = parse(Array.isArray(data) ? data : (data.alerts || []));
-                body.innerHTML = html(well, rows);
+                const rows = parse(Array.isArray(data) ? data : (data.alerts || []));
+
+                const reportHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Alerts Report - ${esc(well)}</title>
+
+            <style>
+                ${css}
+
+                body{
+                    font-family: Arial, sans-serif;
+                    margin:20px;
+                    background:#ffffff;
+                    color:#111;
+                }
+
+                .toolbar{
+                    display:flex;
+                    justify-content:flex-end;
+                    gap:10px;
+                    margin-bottom:20px;
+                    padding-bottom:12px;
+                    border-bottom:1px solid #ddd;
+                }
+
+                .toolbar button{
+                    background:#0b5cab;
+                    color:#fff;
+                    border:none;
+                    padding:10px 18px;
+                    border-radius:6px;
+                    font-size:14px;
+                    font-weight:600;
+                    cursor:pointer;
+                }
+
+                .toolbar button:hover{
+                    background:#084a8c;
+                }
+
+                @media print{
+                    .toolbar{
+                        display:none !important;
+                    }
+                }
+            </style>
+        </head>
+
+        <body>
+
+            <div class="toolbar">
+                <button onclick="window.print()">
+                    Print / Download PDF
+                </button>
+            </div>
+
+            ${html(well, rows)}
+
+        </body>
+        </html>`;
+
+                const reportWindow = window.open(
+                    '',
+                    '_blank',
+                    'width=1400,height=900'
+                );
+
+                if (!reportWindow) {
+                    alert('Popup blocked. Please allow popups for this site.');
+                    return;
+                }
+
+                reportWindow.document.open();
+                reportWindow.document.write(reportHtml);
+                reportWindow.document.close();
+
             } catch (e) {
-                rows = [];
-                body.innerHTML = `<p class="modal-error">Could not load alerts: ${esc(e.message || e)}</p>`;
+                alert(`Could not load report: ${e.message || e}`);
             }
         });
 
