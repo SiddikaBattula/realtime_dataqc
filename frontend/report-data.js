@@ -9,11 +9,20 @@
   sentence differently and puts the bit depth in a different place:
 
       H2S : 80.00ppm above limit 50ppm  BD : 2499.95m          range
-      RPM cannot be 0 in DRILLING where BD:202.61m, MD:1551.01m zero value
+      RPM is 0 where BD:202.61m, MD:1551.01m                    zero value
       ROP increased by 80.00%, BD:2499.94m                      ROP change
       TA is greater than TG where BD:2499.95                    TA > TG
       last depth : 12.00 | current depth : 30.00 | Bit Depth jump by 18.00m
       Please check for data Trans. Hookload has remained unchanged for 30 seconds
+
+  Zero values and bit-depth jumps are saved once, when they start, and closed
+  by one more alert when they stop (alerts_logic/episode_tracker.py):
+
+      RPM was 0 in DRILLING from 10-10-26 14:20:03 to 10-10-26 14:22:10 (127s), now 60.00, BD:2499.95m
+      Bit depth was jumping from 10-10-26 14:31:19 to 10-10-26 14:31:44 (25s), 3 jump(s), largest 8.01m, now steady
+
+  A closing alert joins its opening alert's row, and its from/to is what the
+  timeline measures the condition by. It is not counted as an alert itself.
 
   So each shape has its own rule below. The rule names the problem without
   its numbers ("H2S above limit"), which is what groups a hundred readings of
@@ -35,6 +44,17 @@ const ReportData = (function () {
     const BD = new RegExp(`\\bBD\\s*:\\s*${N}\\s*([a-z]*)`, 'i');
     const MD = new RegExp(`\\bMD\\s*:\\s*${N}\\s*([a-z]*)`, 'i');
 
+    // "from 10-10-26 14:20:03 to 10-10-26 14:22:10" inside a closing alert.
+    const T = '(\\d{2})-(\\d{2})-(\\d{2}) (\\d{2}):(\\d{2}):(\\d{2})';
+    const SPAN = new RegExp(`from ${T} to ${T}`, 'i');
+
+    function spanOf(text) {
+        const m = SPAN.exec(text);
+        if (!m) return {};
+        const at = (i) => new Date(2000 + +m[i + 2], +m[i + 1] - 1, +m[i], +m[i + 3], +m[i + 4], +m[i + 5]);
+        return { from: at(1), to: at(7), closing: true };
+    }
+
     // [category, pattern, (match) => fields]. First match wins, so the more
     // specific shapes come first. `title` is the problem without its numbers;
     // `value`/`unit` is the reading worth reporting a range of.
@@ -46,6 +66,20 @@ const ReportData = (function () {
                 value: +m[2], unit: m[3] || m[6], limit: +m[5],
             })],
 
+        // Titled like the "is 0 where" alert it closes, so the two share a row.
+        ['Zero value',
+            /^(.+?) was 0 in (.+?) from \d/i,
+            (m, text) => ({ title: `${m[1]} reading 0`, ...spanOf(text) })],
+
+        ['Bit depth jump',
+            /^Bit depth was jumping from \d/i,
+            (m, text) => ({ title: 'Bit depth jump', ...spanOf(text) })],
+
+        ['Zero value',
+            /^(.+?) is 0 where/i,
+            (m) => ({ title: `${m[1]} reading 0` })],
+
+        // The wording before "is 0 where", still in files from older agents.
         ['Zero value',
             /^(.+?) cannot be 0 in (.+?) where/i,
             (m) => ({ title: `${m[1]} reading 0 while ${m[2].toUpperCase()}` })],
@@ -149,8 +183,16 @@ const ReportData = (function () {
 
         const tone = typeof classify === 'function' ? classify(text).tone : 'info';
 
+        const valid = (d) => d instanceof Date && !Number.isNaN(d.getTime());
+        const closing = Boolean(fields.closing) && valid(fields.from) && valid(fields.to);
+
         return {
             time,
+            // What the condition covered: its own from/to for a closing alert,
+            // the moment it was raised for every other one.
+            start: closing ? fields.from : time,
+            end: closing ? fields.to : time,
+            closing,
             text,
             category,
             title: fields.title,
@@ -203,12 +245,14 @@ const ReportData = (function () {
         const out = [];
         let current = null;
 
-        for (const r of rows) {
-            if (!current || r.time - current.last > gap) {
-                current = { first: r.time, last: r.time, rows: [] };
+        // By when each condition started, so a closing alert lands in the
+        // episode its opening alert began, however long that ran.
+        for (const r of [...rows].sort((a, b) => a.start - b.start)) {
+            if (!current || r.start - current.last > gap) {
+                current = { first: r.start, last: r.end, rows: [] };
                 out.push(current);
             }
-            current.last = r.time;
+            if (r.end > current.last) current.last = r.end;
             current.rows.push(r);
         }
         return out;
@@ -235,6 +279,9 @@ const ReportData = (function () {
             g.rows.push(r);
             if (SEVERITY_RANK[r.severity] < SEVERITY_RANK[g.severity]) g.severity = r.severity;
 
+            // A closing alert says when its row ended; it is not another alert.
+            if (r.closing) continue;
+
             byHour[r.time.getHours()]++;
             days.add(r.time.toDateString());
         }
@@ -251,10 +298,10 @@ const ReportData = (function () {
                 category: g.category,
                 title: g.title,
                 severity: g.severity,
-                count: g.rows.length,
+                count: g.rows.filter((r) => !r.closing).length,
                 episodes,
-                first: g.rows[0].time,
-                last: g.rows[g.rows.length - 1].time,
+                first: new Date(Math.min(...g.rows.map((r) => r.start))),
+                last: new Date(Math.max(...g.rows.map((r) => r.end))),
                 reading,
                 bitDepth: span(g.rows.map((r) => r.bd), g.depthUnit),
                 holeDepth: span(g.rows.map((r) => r.md), g.depthUnit),
@@ -269,18 +316,19 @@ const ReportData = (function () {
             title: g.title,
             category: g.category,
             severity: g.severity,
-            count: ep.rows.length,
+            count: ep.rows.filter((r) => !r.closing).length,
             bitDepth: span(ep.rows.map((r) => r.bd), ep.rows[0].depthUnit),
         }))).sort((a, b) => a.first - b.first);
 
         const peak = Math.max(...byHour);
+        const raised = rows.filter((r) => !r.closing);
 
         return {
-            total: rows.length,
-            first: rows.length ? rows[0].time : null,
-            last: rows.length ? rows[rows.length - 1].time : null,
+            total: raised.length,
+            first: rows.length ? new Date(Math.min(...rows.map((r) => r.start))) : null,
+            last: rows.length ? new Date(Math.max(...rows.map((r) => r.end))) : null,
             days: days.size,
-            critical: rows.filter((r) => r.severity === 'Critical').length,
+            critical: raised.filter((r) => r.severity === 'Critical').length,
             groups: list,
             timeline,
             peakHour: peak > 0 ? byHour.indexOf(peak) : null,

@@ -334,7 +334,7 @@ const ReportPdf = (function () {
         doc.text(clean(`Alerts of the same type less than ${ReportData.EPISODE_GAP_MINUTES} minutes apart are one group of alerts.`),
             MARGIN, y);
         y = table(doc, y + 3,
-            ['First alert', 'Last alert', 'Span', 'Severity', 'Alert', 'Alerts', 'Bit depth'],
+            ['From', 'To', 'Duration', 'Severity', 'Alert', 'Alerts', 'Bit depth'],
             s.timeline.map((e) => [
                 stamp(e.first), stamp(e.last), duration(e.last - e.first),
                 e.severity, e.title, String(e.count), e.bitDepth,

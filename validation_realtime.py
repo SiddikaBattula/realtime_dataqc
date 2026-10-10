@@ -63,6 +63,7 @@ from alerts_logic import (
     run_hookload_check,
     run_bit_depth_check,
 )
+from alerts_logic.episode_tracker import EpisodeTracker
 import json
 import os
 # alert_raised_at, ALERT_TIME_FORMAT etc. are re-exported above so anything
@@ -125,6 +126,10 @@ class RealtimeValidator:
         self.drilling_criteria = drilling_criteria
 
         self._last_alerted = {}
+
+        # When each zero-value and bit-depth-jump condition started, so a
+        # closing alert can say how long it lasted - see episode_tracker.py.
+        self.episodes = EpisodeTracker()
 
 
         # The well file these rules came from, watched for edits. None means
@@ -647,10 +652,12 @@ class RealtimeValidator:
         standing_reasons = []
 
         raised = set()
+        raised_values = {}
 
         def raise_alert(message, *params, subject, value=None, why=None):
 
             raised.add(subject)
+            raised_values[subject] = value
             standing.append(message)
             standing_sources.append(params)
             standing_reasons.append(why)
@@ -748,6 +755,19 @@ class RealtimeValidator:
         )
 
         # ------------------------------------------------------------------
+        # How long zero values and bit-depth jumps lasted
+        # ------------------------------------------------------------------
+        for subject in list(raised):
+            self.episodes.note(
+                subject, now, activity=activity,
+                jump=raised_values[subject] if subject == "BIT_DEPTH_CHANGE" else None,
+            )
+
+        self.episodes.close_cleared(
+            self, raised, raise_alert, now, normalized_data, bit_depth, depth_unit,
+        )
+
+        # ------------------------------------------------------------------
 
         # A problem that has gone away has cleared: if it comes back, even
         # saying exactly the same thing, that is a new alert.
@@ -797,6 +817,7 @@ class RealtimeValidator:
         self.max_windows = {}
         self._last_activity = None
         self._last_alerted.clear()
+        self.episodes.reset()
         self.alert_log.reset()
         self.log.info("Validator state reset")
 

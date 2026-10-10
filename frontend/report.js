@@ -109,7 +109,7 @@
         <h3 class="rp-h">Timeline of alert groups</h3>
         <p class="rp-hint">Alerts of the same type less than ${ReportData.EPISODE_GAP_MINUTES} minutes apart are one group of alerts.</p>
         <table class="rp-table"><thead><tr>
-            <th>First alert</th><th>Last alert</th><th>Span</th><th>Severity</th><th>Alert</th><th class="rp-num">Alerts</th><th>Bit depth</th>
+            <th>From</th><th>To</th><th>Duration</th><th>Severity</th><th>Alert</th><th class="rp-num">Alerts</th><th>Bit depth</th>
         </tr></thead><tbody>
         ${s.timeline.map((e) => `<tr>
             <td>${when(e.first)}</td><td>${when(e.last)}</td><td>${esc(duration(e.last - e.first))}</td>
