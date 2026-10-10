@@ -1,14 +1,13 @@
-
-
 """
 Realtime QC checks - the rules that turn one reading into a list of alerts.
 
-One RealtimeValidator per well. It holds the state the change checks need
-(the previous SPP, SPM, ROP and HOOKLOAD readings and when each was taken),
-so it cannot be shared between wells - build one per agent.
+One RealtimeValidator per well. It holds the state the checks need between
+readings (the learned SPP/SPM ratio, the ROP window, how long HOOKLOAD has
+been unchanged, the last bit depth), so it cannot be shared between wells -
+build one per agent.
 
-Seven checks run on every reading, in this order (each now lives in its own
-file under alerts_logic/ - see that package's docstring for the map):
+Seven checks run on every reading, in this order, each in its own file under
+alerts_logic/:
 
   1. activity      DRILLING or NON DRILLING, from hole depth minus bit depth
                    against this well's drilling_criteria, then every parameter
@@ -17,14 +16,15 @@ file under alerts_logic/ - see that package's docstring for the map):
                    after `factor` converts the reading into the limits' unit -
                    multiplying, or dividing for ROP (see INVERSE_PARAMS)
   3. TA > TG       alert once TA has been above TG for TA_TG.duration_seconds
-  4. SPP           percentage move over SPP.duration_seconds, either direction
-  5. SPM           the same, for total pump strokes per minute
-  6. ROP           the same, but an increase only - a drop to zero is normal
-                   whenever the bit comes off bottom. Measured on the reading
-                   after `factor`, so a rise means the bit is drilling faster
-                   and not that the raw minutes-per-metre column went up
-  7. HOOKLOAD      alert when the value has not moved at all for
+  4. SPP           SPP against SPM x an SPP/SPM ratio learned from the well,
+                   outside SPP.percentage_change either way
+  5. ROP           above its rolling average over ROP.duration_seconds by more
+                   than ROP.percentage_change - increase only, since a drop to
+                   zero is normal whenever the bit comes off bottom
+  6. HOOKLOAD      alert when the value has not moved at all for
                    HOOKLOAD.duration_seconds, which means a stalled feed
+  7. bit depth     a move between two readings above this well's threshold
+                   for the activity
 
 Rules come from the well's own file in data/wells/ and are re-read when it
 changes, without a restart - so two rigs can disagree about their column
@@ -53,7 +53,6 @@ from alerts_logic import (
     PUMPS,
     DERIVED_PARAMS,
     OPTIONAL_PARAMS,
-    alert_raised_at,
     detect_activity as _detect_activity,
     run_zero_checks,
     run_range_checks,
@@ -65,9 +64,6 @@ from alerts_logic import (
 )
 import json
 import os
-# alert_raised_at, ALERT_TIME_FORMAT etc. are re-exported above so anything
-# that used to do `from realtime_validator import alert_raised_at` (or the
-# other constants) keeps working unchanged.
 
 log = get_logger(__name__)
 
@@ -100,11 +96,7 @@ class ValidationResult:
     # later - which reads as "nothing wrong" unless this is there too.
     standing: int = 0
 
-    spp_percentage: float = 0.0
-    totalspm_percentage: float = 0.0
-    rop_percentage: float = 0.0
     activity: str = None
-    normalized: dict = field(default_factory=dict)
 
 
 class RealtimeValidator:
@@ -139,39 +131,23 @@ class RealtimeValidator:
         # ---- persistent state (was module-level globals) ----
         self.ta_gt_tg_start = None
 
-        # self.previous_spp = None
-        # self.previous_spp_time = None
-
+        # SPP: the SPP/SPM ratio learned from the well, when it was last
+        # learned, when SPP was last compared against it, and how often it is
+        # learned again.
         self.spp_spm_factor = 0.0
-
-# Factor calculation timer
         self.spp_spm_factor_time = datetime.now()
-
-        # Comparison timer
         self.spp_comparison_time = datetime.now()
-
-        # Factor refresh interval
         self.spp_factor_duration = 60.0
 
-        # ROP monitoring
-        self.rop_values = []
-        self.rop_window_start = None
-        self.previous_rop = None
-        self.previous_rop_time = None
+        # ROP: (time, m/hr) for the readings in the rolling window.
         self.rop_history = deque()
 
-
-        # Hookload monitoring
+        # Hookload: the value it is stuck at and since when, and whether the
+        # stuck alert is up and when it was last raised.
         self.previous_hookload = None
         self.previous_hookload_time = None
-        self.hookload_samples = []
-
-        # Active alert state
         self.hookload_alert_active = False
         self.hookload_last_alert_time = None
-
-        
-
 
         # What the last reading was called, so a change of activity is logged
         # once rather than every second. What was last written to the alert log
@@ -206,10 +182,6 @@ class RealtimeValidator:
         self.ta_tg_duration = conditions["TA_TG"]["duration_seconds"]
 
         self.spp_threshold = conditions["SPP"]["percentage_change"]
-        self.spp_duration = conditions["SPP"]["duration_seconds"]
-
-        # self.totalspm_threshold = conditions["SPM"]["percentage_change"]
-        # self.totalspm_duration = conditions["SPM"]["duration_seconds"]
 
         self.rop_threshold = conditions["ROP"]["percentage_change"]
         self.rop_duration = conditions["ROP"]["duration_seconds"]
@@ -232,12 +204,8 @@ class RealtimeValidator:
             if not isinstance(block, dict):
                 continue
 
-            if param == "HOOKLOAD":
-                pct = to_number(block.get("percentage_change"))
-                seconds = to_number(block.get("duration_seconds"))
-            else:
-                pct = to_number(block.get("percentage_change"))
-                seconds = to_number(block.get("duration_seconds"))
+            pct = to_number(block.get("percentage_change"))
+            seconds = to_number(block.get("duration_seconds"))
 
             if pct is None or seconds is None or seconds <= 0:
                 continue
@@ -307,7 +275,7 @@ class RealtimeValidator:
         if capped:
             calculated = cap
 
-        self.log.info(
+        self.log.debug(
             "%s window done | %.0fs, %d samples | min=%.2f max_seen=%.2f avg=%.2f | "
             "cal=avg+%s%%=%.2f%s | current max=%.2f | %s",
             param, elapsed, samples, low, high, avg, pct, calculated,
@@ -679,9 +647,6 @@ class RealtimeValidator:
         # check below both ask for it, and nothing between them can change
         # what it comes to.
         total_spm = self._get_total_spm(normalized_data)
-        spp_percentage = 0.0
-        totalspm_percentage = 0.0
-        rop_percentage = 0.0
 
         # For the reading() call at the bottom - same values the TA>TG check
         # itself looks at.
@@ -721,7 +686,7 @@ class RealtimeValidator:
         # ------------------------------------------------------------------
         # 6. ROP change
         # ------------------------------------------------------------------
-        rop_percentage = run_rop_check(
+        run_rop_check(
             self, normalized_data, raise_alert, date_str, bit_depth, depth_unit,rop_unit, now,
         )
 
@@ -750,12 +715,9 @@ class RealtimeValidator:
         # ------------------------------------------------------------------
 
         # A problem that has gone away has cleared: if it comes back, even
-        # saying exactly the same thing, that is a new alert.
-        # for subject in list(self._last_alerted):
-        #     if subject not in raised and subject not in EVENT_SUBJECTS:
-        #         del self._last_alerted[subject]
-
-
+        # saying exactly the same thing, that is a new alert. The stuck
+        # hookload is the exception - it stays up for as long as its own
+        # check says the feed is still frozen.
         for subject in list(self._last_alerted):
 
             if (
@@ -769,7 +731,6 @@ class RealtimeValidator:
 
         self.alert_log.reading(
             activity, bit_depth, ta, tg,
-            spp_percentage, totalspm_percentage, rop_percentage,
             standing, standing_sources,
             reasons=standing_reasons,
             normalized_data=normalized_data,
@@ -778,27 +739,8 @@ class RealtimeValidator:
         return ValidationResult(
             alerts=alerts,
             standing=len(standing),
-            spp_percentage=spp_percentage,
-            totalspm_percentage=totalspm_percentage,
-            rop_percentage=rop_percentage,
             activity=activity,
-            normalized=normalized_data,
         )
-
-
-
-    def reset_state(self):
-        """Clear timers/baselines - use when the source table is switched."""
-        self.ta_gt_tg_start = None
-        self.previous_spp = self.previous_spp_time = None
-        self.previous_totalspm = self.previous_totalspm_time = None
-        self.previous_rop = self.previous_rop_time = None
-        self.previous_hookload = self.previous_hookload_time = None
-        self.max_windows = {}
-        self._last_activity = None
-        self._last_alerted.clear()
-        self.alert_log.reset()
-        self.log.info("Validator state reset")
 
 
 # ----------------------------------------------------------------------

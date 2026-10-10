@@ -5,17 +5,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Real-Time Data QC</title>
-    <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="user-menu.css">
-    <link rel="stylesheet" href="well-depths.css">
-    <link rel="stylesheet" href="well-pins.css">
-    <link rel="icon" href="logo-default-223x59.png">
+    <link rel="stylesheet" href="../css/style.css">
+    <link rel="stylesheet" href="../css/user-menu.css">
+    <link rel="stylesheet" href="../css/well-depths.css">
+    <link rel="stylesheet" href="../css/well-pins.css">
+    <link rel="icon" href="../images/logo-default-223x59.png">
 </head>
 
 <body>
     <header class="topbar">
         <div class="brand">
-            <img class="brand-logo" src="logo-default-223x59.png" alt="OFI India" width="896" height="1153">
+            <img class="brand-logo" src="../images/logo-default-223x59.png" alt="OFI India" width="896" height="1153">
             <span class="brand-text">Real-Time Data QC</span>
         </div>
 
@@ -86,18 +86,9 @@
     </header>
 
     <main class="wrap">
-        <!-- <div class="summary">
-            <span><b id="stat-wells">0</b> wells monitored</span>
-            <i class="summary-sep"></i>
-            <span class="summary-faint" id="stat-updated">—</span>
-        </div> -->
-
         <section class="grid" id="grid"></section>
 
         <div class="empty" id="empty">
-            <!-- <svg class="empty-mark" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 2 4 7v10l8 5 8-5V7z" />
-            </svg> -->
             <h2>No wells being monitored</h2>
             <p>Open <b>Settings</b> and add a well by its database name and IP address.</p>
             <button class="btn btn-primary" type="button" data-open-settings>Add the first well</button>
@@ -212,10 +203,10 @@
                                      monitored exactly as before and simply
                                      appears in no email, so it is not required.
 
-                                     Settings only - app.js hides this when the
-                                     form is opened from a well's pencil, so a
-                                     rig's base is set where the well is added
-                                     and not alongside its thresholds. -->
+                                     On the form both when a well is added and
+                                     under its pencil, where it opens on the
+                                     stored region. It is also the Base region
+                                     in that well's report. -->
                                 <label class="field" id="region-field">
                                     <span>Base region</span>
                                     <input type="text" id="region" placeholder="mumbai" spellcheck="false"
@@ -366,17 +357,17 @@
 
     <!-- shared.js first: app.js and logs.js both read API_BASE, api(),
          parseAlert(), classify() and escapeHtml() out of it. -->
-    <script src="shared.js"></script>
-    <script src="secret-input.js"></script>
-    <script src="user-menu.js"></script>
-    <script src="well-depths.js"></script>
-    <script src="well-pins.js"></script>
-    <script src="email.js"></script>
-    <script src="app.js"></script>
-    <script src="users.js"></script>
-    <script src="report-data.js"></script>
-    <script src="report-pdf.js"></script>
-    <script src="report.js"></script>
+    <script src="../js/shared.js"></script>
+    <script src="../js/secret-input.js"></script>
+    <script src="../js/user-menu.js"></script>
+    <script src="../js/well-depths.js"></script>
+    <script src="../js/well-pins.js"></script>
+    <script src="../js/email.js"></script>
+    <script src="../js/app.js"></script>
+    <script src="../js/users.js"></script>
+    <script src="../js/report-data.js"></script>
+    <script src="../js/report-pdf.js"></script>
+    <script src="../js/report.js"></script>
 </body>
 
 </html>

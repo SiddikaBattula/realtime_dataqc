@@ -3,9 +3,8 @@ One connection to one rig's database.
 
 The agent builds one of these per well and throws it away whenever a read
 fails, so the next pass reconnects rather than looping on a socket that can no
-longer answer. Nothing here writes to the rig in normal running:
-get_current_row is a SELECT, and save_alert exists for a deployment that wants
-the alerts in the database too - the agents do not call it.
+longer answer. Nothing here writes to the rig: get_current_row is a SELECT,
+and the alerts go to output/<well>/alerts.json, never into the rig's database.
 
 Every line is logged against the well that owns the connection: the agent
 passes its own logger in, so a timeout in a shared file says which rig timed
@@ -73,31 +72,6 @@ class MySQLClient:
         )
 
         return row
-
-    def save_alert(self, alert_time, description):
-        """
-        Insert one alert into the rig's own dataqcalert table.
-
-        Not called by the agents - they write to output/<well>/alerts.json and
-        leave the rig's database alone.
-        """
-        query = """
-        INSERT INTO dataqcalert
-        (
-            Time,
-            Description
-        )
-        VALUES
-        (
-            %s,
-            %s
-        )
-        """
-
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, (alert_time, description))
-
-        self.log.info("alert written to dataqcalert: %s", description)
 
     def close(self):
         """

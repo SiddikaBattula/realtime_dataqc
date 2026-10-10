@@ -18,16 +18,23 @@ the rules and working backwards. Each alert now carries the check's own
 arithmetic, and the whole reading is printed under it:
 
     Well         : KJ-16
-    Activity     : DRILLING  (off-bottom margin 0.05)
-    ...
+    Activity     : DRILLING - hole 2000.0m - bit 2000.0m = 0.0m off bottom,
+                   within the 0.05m off-bottom margin
+    Bit depth    : 2000.0m (column BIT_DPT_MD)
+    Hole depth   : 2000.0m (column TOT_DPT_MD)
+    TA / TG      : TA=2.5%  TG=5.0%
     Alerts       : 2
       1. ROP : 120.00m/hr above limit 100m/hr  BD : 2000.0m
            why : ranges[ROP] is 0 to 100m/hr; read 0.5 from column ROP,
                  60 / 0.5 = 120.0m/hr, which is above the max of 100m/hr
-      2. Torque cannot be 0 in DRILLING where BD:2000.0m, MD:2000.0m
+      2. Torque is 0 where BD:2000.0m, MD:2000.0m
            why : activity[DRILLING] requires ROT_TORQUE_AVG above 0; read 0.0
            from: ROT_TORQUE_AVG = ROT_TORQUE_AVG
-    Readings     : DEPTH=2000.0m  SPP=100.0psi  WOB=0.0kflb  ...
+    Readings     : DEPTH=2000.0m  ROP=120.0m/hr (raw 0.5)  WOB=0.0kflb  ...
+
+Every value is shown in the unit its limits are written in - after `factor`,
+as the checks compare it - with the raw column value beside it when the two
+differ.
 
 One AlertLog per well, held by that well's validator. It keeps the state that
 decides when to write - what was last said, and when - so a problem that is
@@ -38,6 +45,8 @@ import re
 
 from datetime import datetime
 
+from alerts_logic.constants import INVERSE_PARAMS
+from column_mapper import to_number
 from config import Config
 from logger import get_logger
 
@@ -57,6 +66,14 @@ def _fingerprint(alert):
     still there" from "something new has happened".
     """
     return _NUMBER.sub("#", _TIMESTAMP_PREFIX.sub("", alert))
+
+
+def _short(number):
+    """4 decimals at most, without trailing zeros: 50.1325, 2500.6, 0.0."""
+    if not isinstance(number, (int, float)):
+        return str(number)
+
+    return f"{number:.4f}".rstrip("0").rstrip(".") if number % 1 else f"{number:.1f}"
 
 
 class AlertLog:
@@ -83,12 +100,6 @@ class AlertLog:
         self.ranges = ranges
         self.drilling_criteria = drilling_criteria
 
-    def reset(self):
-        """Forget what was last said, so the next reading is written in full."""
-        self._last_fingerprint = None
-        self._unchanged_since = None
-        self._last_logged = None
-
     # ------------------------------------------------------------------
     # Why an alert fired
     #
@@ -103,6 +114,8 @@ class AlertLog:
         factor = limits.get("factor")
         bound = "min" if side == "below" else "max"
 
+        raw, value = _short(raw), _short(value)
+
         if factor is None:
             conversion = "compared as stored"
         elif inverse:
@@ -116,36 +129,25 @@ class AlertLog:
             f"which is {side} the {bound} of {limit_text}{unit}"
         )
 
-    def change_reason(self, param, previous, current, elapsed, percent,
-                      threshold, duration, raw=None):
-        """Why a percentage-change check fired."""
-        unit = self.ranges.get(param, {}).get("unit", "")
-
-        read = (
-            f"read {raw} from column {self._column(param)}" if raw is not None
-            else f"from column {self._column(param)}"
-        )
-
-        return (
-            f"{param} went {previous}{unit} -> {current}{unit} over {elapsed:.1f}s "
-            f"({percent:+.2f}%), past conditions[{param}] of {threshold}% "
-            f"over {duration}s; {read}"
-        )
-
     def zero_reason(self, param, activity, value):
         """Why a parameter that must not be zero raised one."""
         return (
             f"activity[{activity}] requires {param} above 0; "
-            f"read {value} from column {self._column(param)}"
+            f"read {_short(value)} from column {self._column(param)}"
         )
 
     def stuck_reason(self, param, value, elapsed, duration):
         """Why a value that has not moved raised one."""
         return (
-            f"{param} has read exactly {value} from column {self._column(param)} "
+            f"{param} has read exactly {_short(value)} from column {self._column(param)} "
             f"for {elapsed:.0f}s, past conditions[{param}] of {duration}s - "
             "a live feed moves"
         )
+
+    @staticmethod
+    def num(value):
+        """A number as the log writes it - 0.4004, not 0.4003666666666667."""
+        return _short(value)
 
     def pump_breakdown(self, normalized_data, pumps):
         """"MP1_SPM 0.0, MP2_SPM 0.0" - what the pumps read when SPM totalled 0."""
@@ -176,12 +178,49 @@ class AlertLog:
             if not self.mapper.is_available(param):
                 continue
 
-            value = normalized_data.get(param)
-            unit = self.ranges.get(param, {}).get("unit", "")
-
-            parts.append(f"{param}={value}{unit}" if unit else f"{param}={value}")
+            parts.append(self.value_text(param, normalized_data.get(param)))
 
         return "  ".join(parts) or "no mapped columns"
+
+    def value_text(self, param, raw):
+        """
+        "ROP=50.13m/hr (raw 1.1969)" - a reading in the unit its limits are
+        written in, as the checks compare it.
+
+        The unit belongs to the converted value, so a reading that `factor`
+        changes is shown converted with the raw column value beside it. Printing
+        the raw value with the unit on - "ROP=1.1969m/hr" for 50 m/hr - was
+        wrong by a factor of 50.
+        """
+        unit = self._unit(param)
+        value = self.in_limit_unit(param, raw)
+
+        if raw is None or value is None:
+            return f"{param}={raw}"
+
+        if value == raw:
+            return f"{param}={_short(value)}{unit}"
+
+        return f"{param}={_short(value)}{unit} (raw {_short(raw)})"
+
+    def _unit(self, param):
+        """The parameter's unit; the bit depth is in the hole depth's."""
+        if param == "BIT_DPT_MD" and "BIT_DPT_MD" not in self.ranges:
+            param = "DEPTH"
+
+        return self.ranges.get(param, {}).get("unit", "")
+
+    def in_limit_unit(self, param, raw):
+        """The reading after `factor`, as range_check compares it."""
+        factor = to_number(self.ranges.get(param, {}).get("factor"))
+
+        if raw is None or not factor:
+            return raw
+
+        if param.upper() in INVERSE_PARAMS:
+            return None if raw == 0 else factor / raw
+
+        return raw * factor
 
     def columns_note(self, params):
         """
@@ -212,7 +251,6 @@ class AlertLog:
     # The block itself
     # ------------------------------------------------------------------
     def reading(self, activity, depth, ta, tg,
-                spp_percentage, totalspm_percentage, rop_percentage,
                 alerts, sources, reasons=(), normalized_data=None):
         """
         One record per reading, never one per alert - and not once a second.
@@ -229,11 +267,12 @@ class AlertLog:
         never logged as all clear.
         """
         now = datetime.now()
+        data = normalized_data or {}
 
         summary = (
-            f"{activity} | depth {depth} | TA {ta} TG {tg} | "
-            f"change SPP {spp_percentage}% SPM {totalspm_percentage}% "
-            f"ROP {rop_percentage}%"
+            f"{activity} | bit {self._depth('BIT_DPT_MD', data, depth, column=False)} "
+            f"hole {self._depth('DEPTH', data, column=False)} | "
+            f"{self.value_text('TA', ta)} {self.value_text('TG', tg)}"
         )
 
         readings = (
@@ -260,17 +299,46 @@ class AlertLog:
         self.log.warning(
             "\n"
             f"Well         : {self.well}\n"
-            f"Activity     : {activity}  "
-            f"(off-bottom margin {self._criteria()})\n"
-            f"Depth        : {depth}\n"
-            f"TA           : {ta}\n"
-            f"TG           : {tg}\n"
-            f"SPP % change : {spp_percentage}\n"
-            f"SPM % change : {totalspm_percentage}\n"
-            f"ROP % change : {rop_percentage}\n"
+            f"Activity     : {self._activity_reason(activity, data, depth)}\n"
+            f"Bit depth    : {self._depth('BIT_DPT_MD', data, depth)}\n"
+            f"Hole depth   : {self._depth('DEPTH', data)}\n"
+            f"TA / TG      : {self.value_text('TA', ta)}  {self.value_text('TG', tg)}\n"
             f"Alerts       : {len(alerts)}\n"
             + self._alert_lines(alerts, sources, reasons) + "\n"
             f"Readings     : {readings}\n"
+        )
+
+    def _depth(self, param, data, fallback=None, column=True):
+        """"2503.18m (column TOT_DPT_MD)" for the block, "2503.18m" for the
+        one-line summary."""
+        value = data.get(param, fallback)
+        unit = self._unit("DEPTH")
+        where = f" (column {self._column(param)})" if column else ""
+
+        if value is None:
+            return f"none read{where}"
+
+        return f"{_short(value)}{unit}{where}"
+
+    def _activity_reason(self, activity, data, bit_fallback=None):
+        """
+        "NON DRILLING - hole 2503.18m - bit 2453.18m = 50m off bottom, more
+        than the 0.1m margin": the activity and the sum that decided it.
+        """
+        hole = data.get("DEPTH")
+        bit = data.get("BIT_DPT_MD", bit_fallback)
+        unit = self.ranges.get("DEPTH", {}).get("unit", "")
+
+        if hole is None or bit is None or activity is None:
+            return f"{activity} - hole or bit depth missing, so it cannot be worked out"
+
+        gap = hole - bit
+        side = "within" if gap <= (self.drilling_criteria or 0) else "more than"
+
+        return (
+            f"{activity} - hole {_short(hole)}{unit} - bit {_short(bit)}{unit} = "
+            f"{_short(gap)}{unit} off bottom, {side} the {self._criteria()}{unit} "
+            "off-bottom margin"
         )
 
     def _alert_lines(self, alerts, sources, reasons):
@@ -282,8 +350,9 @@ class AlertLog:
 
             why = reasons[number - 1] if number <= len(reasons) else None
 
-            if why:
-                lines.append(f"       why : {why}")
+            # Every check gives one. Should a new check forget, the block says
+            # so rather than leaving the alert looking explained.
+            lines.append(f"       why : {why or 'no reason given by this check'}")
 
             note = self.columns_note(
                 sources[number - 1] if number <= len(sources) else ()

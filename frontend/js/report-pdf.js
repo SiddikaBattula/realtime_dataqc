@@ -1,7 +1,7 @@
 /*
   Writes the alerts report as a real PDF file and downloads it.
 
-  Built with jsPDF + jspdf-autotable, kept in frontend/vendor/ rather than
+  Built with jsPDF + jspdf-autotable, kept in frontend/js/vendor/ rather than
   fetched from a CDN, so it works on a rig-side network with no internet.
   They are only loaded the first time someone asks for a PDF; the dashboard
   itself never pays for them.
@@ -12,7 +12,8 @@
 'use strict';
 
 const ReportPdf = (function () {
-    const LIBS = ['vendor/jspdf.umd.min.js', 'vendor/jspdf.plugin.autotable.min.js'];
+    // Relative to the page (frontend/html/), like every other asset it loads.
+    const LIBS = ['../js/vendor/jspdf.umd.min.js', '../js/vendor/jspdf.plugin.autotable.min.js'];
 
     // Taken from the logo: its charcoal and its yellow drop.
     const INK = [56, 56, 56];
@@ -212,45 +213,7 @@ const ReportPdf = (function () {
         }
     }
 
-    function calculateTotalDowntime(alerts) {
-        let stoppedAt = null;
-        let totalMs = 0;
 
-        alerts
-            .sort((a, b) => a.time - b.time)
-            .forEach(alert => {
-
-                if (alert.title === 'Real-time data feed stopped') {
-                    stoppedAt = alert.time;
-                }
-
-                if (
-                    alert.title === 'Real-time data feed resumed' &&
-                    stoppedAt
-                ) {
-                    totalMs += alert.time - stoppedAt;
-                    stoppedAt = null;
-                }
-            });
-
-        return totalMs;
-    }
-
-    function formatDuration(ms) {
-        const totalSeconds = Math.floor(ms / 1000);
-
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds % 3600) / 60);
-        const seconds = totalSeconds % 60;
-
-        const parts = [];
-
-        if (hours) parts.push(`${hours}h`);
-        if (minutes) parts.push(`${minutes}m`);
-        if (seconds || parts.length === 0) parts.push(`${seconds}s`);
-
-        return parts.join(' ');
-    }
 
 
 
@@ -260,17 +223,8 @@ const ReportPdf = (function () {
 
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-        const { stamp, duration } = ReportData;
+        const { stamp, duration, formatDuration } = ReportData;
         const s = summary;
-        // ADD HERE
-        const durationMap = {};
-
-        s.timeline.forEach((e) => {
-            if (!durationMap[e.title]) {
-                durationMap[e.title] = 0;
-            }
-            durationMap[e.title] += (e.last - e.first);
-        });
 
         let y = header(doc, info, logo);
 
@@ -312,7 +266,7 @@ const ReportPdf = (function () {
                 g.title,
                 String(g.count),
                 String(g.episodes.length),
-                formatDuration(durationMap[g.title] || 0)
+                formatDuration(g.duration)
             ]),
             {
                 columnStyles: {
@@ -334,9 +288,9 @@ const ReportPdf = (function () {
         doc.text(clean(`Alerts of the same type less than ${ReportData.EPISODE_GAP_MINUTES} minutes apart are one group of alerts.`),
             MARGIN, y);
         y = table(doc, y + 3,
-            ['From', 'To', 'Duration', 'Severity', 'Alert', 'Alerts', 'Bit depth'],
+            ['First alert', 'Last alert', 'Span', 'Severity', 'Alert', 'Alerts', 'Bit depth'],
             s.timeline.map((e) => [
-                stamp(e.first), stamp(e.last), duration(e.last - e.first),
+                stamp(e.first), stamp(e.last), duration(e.duration),
                 e.severity, e.title, String(e.count), e.bitDepth,
             ]),
             {

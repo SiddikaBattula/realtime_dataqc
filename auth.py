@@ -380,8 +380,10 @@ async def logout(request: Request):
 
 # Everything the sign-in page loads, since nobody is signed in yet to fetch it.
 PUBLIC_PATHS = {
-    "/health", "/login.html", "/login.css", "/login.js", "/secret-input.js",
-    "/style.css", "/logo-default-223x59.png",
+    "/health", "/login.html",
+    "/css/style.css", "/css/login.css",
+    "/js/login.js", "/js/secret-input.js",
+    "/images/logo-default-223x59.png",
 }
 
 

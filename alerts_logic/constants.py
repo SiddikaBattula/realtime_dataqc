@@ -34,11 +34,12 @@ INVERSE_PARAMS = {"ROP"}
 PUMPS = ("MP1_SPM", "MP2_SPM", "MP3_SPM", "MP4_SPM", "MP5_SPM")
 
 # Logical names that are worked out from other columns instead of being read
-# from one of their own. SPM is the only one - see realtime_validator.py for
-# the full explanation of why.
+# from one of their own. SPM is the only one: the pumps added up - see
+# RealtimeValidator._get_total_spm in validation_realtime.py.
 DERIVED_PARAMS = {"SPM"}
 
-# Absent columns that are not a mistake - see realtime_validator.py.
+# Absent columns that are not a mistake: a rig with three pumps simply has no
+# MP4_SPM or MP5_SPM column, so ColumnMapper does not warn about them.
 OPTIONAL_PARAMS = set(PUMPS)
 
 
@@ -53,3 +54,21 @@ def alert_raised_at(alert):
         return datetime.strptime(match.group(1), ALERT_TIME_FORMAT)
     except ValueError:
         return None
+
+# The alerts that only say how long a zero value or a bit-depth jump lasted:
+# "RPM has resumed (was 0 for 60 seconds)" and "Bit depth steady for 30
+# seconds (was jumping for ...)". They are in the file for the report's Time
+# Duration and nothing else - the card leaves them out. The last two are the
+# wording an earlier build wrote, still in files it saved.
+_DURATION_ONLY = re.compile(
+    r"has resumed \(was 0 for \d+ seconds\)"
+    r"|Bit depth steady for \d+ seconds \(was jumping"
+    r"|resumed at [\d:]+ - was 0 from"
+    r"|Bit depth steady again since",
+    re.I,
+)
+
+
+def is_duration_only(alert):
+    """Whether this alert is only there for the report's Time Duration."""
+    return isinstance(alert, str) and bool(_DURATION_ONLY.search(alert))

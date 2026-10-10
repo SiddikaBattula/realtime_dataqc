@@ -345,13 +345,29 @@ Never commit `.env`. It holds the real password.
 | `config_api.py` | The API and the dashboard server |
 | `config.py`, `logger.py` | Settings from `.env`, and logging to `logs/` |
 
-Two pages in `frontend/`, each with its own HTML, CSS and JavaScript:
+`frontend/` is split by kind of file:
+
+```
+frontend/
+  html/     index.html, login.html, logs.html
+  css/      style.css, login.css, logs.css, user-menu.css, well-depths.css, well-pins.css
+  js/       app.js, shared.js, login.js, logs.js, report*.js, ... and vendor/ (jsPDF)
+  images/   logo-default-223x59.png
+```
+
+The pages keep their addresses at the root - `/`, `/login.html`,
+`/logs.html?well=...` - and `config_api.py` serves `css/`, `js/` and `images/`
+under `/css`, `/js` and `/images`. Each page links its files as
+`../css/style.css` and so on, which works both there and from a plain static
+server.
 
 | File | Job |
 |---|---|
-| `index.html`, `style.css`, `app.js` | The dashboard - the well cards and the settings form |
-| `logs.html`, `logs.css`, `logs.js` | One well's whole alert history, opened by **Show Logs** |
-| `shared.js` | What both pages need: where the API is, and how to read one alert |
+| `html/index.html`, `css/style.css`, `js/app.js` | The dashboard - the well cards and the settings form |
+| `html/logs.html`, `css/logs.css`, `js/logs.js` | One well's whole alert history, opened by **Show Logs** |
+| `html/login.html`, `css/login.css`, `js/login.js` | Sign-in |
+| `js/report.js`, `js/report-data.js`, `js/report-pdf.js` | The **Report** button, on screen and as a PDF |
+| `js/shared.js` | What the pages need in common: where the API is, and how to read one alert |
 
 The log page stands on its own: it takes the well from its own query string
 (`/logs.html?well=<database_name>`), fetches its own alerts and polls for more,
@@ -374,6 +390,6 @@ To point the page at a rig on another machine, name the API on the URL. It is
 read per load and never stored:
 
 ```
-http://127.0.0.1:5500/index.html?api=http://10.0.0.5:8000
+http://127.0.0.1:5500/html/index.html?api=http://10.0.0.5:8000
 ```
 

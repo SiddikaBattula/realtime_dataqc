@@ -6,9 +6,7 @@ validator) speaks ONLY logical names: SPP, ROP, HOOKLOAD, ...
 When the source table changes, edit data/column_mapping.json and nothing else.
 """
 
-import json
 from decimal import Decimal
-from pathlib import Path
 
 from logger import get_logger
 
@@ -92,20 +90,6 @@ class ColumnMapper:
 
         log.info("Column mapping from %s (%d logical columns)", source, len(mapping))
         return cls(mapping, critical, derived, optional)
-
-    @classmethod
-    def from_file(cls, path, critical=None):
-        path = Path(path)
-        if not path.exists():
-            raise ColumnMappingError(f"Column mapping file not found: {path}")
-
-        try:
-            with open(path, "r", encoding="utf-8") as fh:
-                mapping = json.load(fh)
-        except json.JSONDecodeError as exc:
-            raise ColumnMappingError(f"{path} is not valid JSON: {exc}") from exc
-
-        return cls.from_mapping(mapping, critical, source=str(path))
 
     # ------------------------------------------------------------------
     # Resolution against the live table

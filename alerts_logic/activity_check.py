@@ -12,10 +12,6 @@ from rule_files import DRILLING, NON_DRILLING
 
 from .constants import ALERT_TIME_FORMAT, PUMPS
 
-# The from/to times written inside a "resumed" alert. ":" rather than the
-# stamp's "-", so they cannot be mistaken for the "[...]" every alert starts with.
-SPAN_TIME_FORMAT = "%d-%m-%y %H:%M:%S"
-
 
 def detect_activity(validator, data, raise_alert, date_str):
     """
@@ -177,11 +173,13 @@ def _report_resumed(validator, zero_now, raise_alert, date_str, bit_depth,
         where = f", BD:{bit_depth:.2f}{depth_unit}" if bit_depth is not None else ""
 
         raise_alert(
-            f"[{date_str}] {name} resumed at {now.strftime('%H:%M:%S')} - "
-            f"was 0 from {since.strftime(SPAN_TIME_FORMAT)} "
-            f"to {now.strftime(SPAN_TIME_FORMAT)} ({seconds}s){where}",
+            f"[{date_str}] {name} has resumed (was 0 for {seconds} seconds){where}",
             param,
             subject=f"RESUMED:{param}",
             value=since.timestamp(),
-            why=f"{param} was 0 from {since} and is not 0 on this reading",
+            why=(
+                f"{param} read 0 from {since.strftime('%H:%M:%S')} until this "
+                f"reading, which reads {validator.alert_log.num(value)} from column "
+                f"{validator.mapper.column_for(param) or 'pumps total'}"
+            ),
         )

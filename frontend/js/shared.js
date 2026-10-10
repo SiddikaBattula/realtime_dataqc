@@ -43,7 +43,7 @@
 
   ?api= still wins outright, for pointing at a rig on another machine:
 
-      http://127.0.0.1:5500/index.html?api=http://10.0.0.5:8000
+      http://127.0.0.1:5500/html/index.html?api=http://10.0.0.5:8000
 
   Read per load and never stored, so a value typed once while developing
   cannot be left behind to misdirect a real deployment later. app.js hands it

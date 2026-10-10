@@ -9,11 +9,10 @@
     // get_all_alerts in the config API). Returns {database_name, count, alerts}.
     const alertsUrl = (well) => `/alerts/all/${encodeURIComponent(well)}`;
 
-    // Logo is served by the frontend from frontend/.
-    // Change this if your server exposes it under a different URL.
-    const LOGO_URL = '/logo-default-223x59.png';
+    // frontend/images/, relative to the page like the page's own <img>.
+    const LOGO_URL = '../images/logo-default-223x59.png';
 
-    const { stamp, duration, pad } = ReportData;
+    const { stamp, duration, formatDuration, pad } = ReportData;
     const esc = (s) => (window.escapeHtml ? escapeHtml(String(s)) : String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])));
 
     function details() {
@@ -34,25 +33,6 @@
         };
     }
 
-    function notes(s) {
-        if (!s.total) return [];
-        const top = s.groups.slice().sort((a, b) => b.count - a.count)[0];
-        const out = [
-            `"${top.title}" was the most frequent alert (${top.count} of ${s.total}, ${top.episodes.length} group(s) of alerts).`,
-        ];
-        if (s.peakHour !== null) {
-            out.push(`Busiest hour: ${pad(s.peakHour)}:00-${pad(s.peakHour)}:59 with ${s.peakCount} alert(s).`);
-        }
-        if (s.critical) {
-            out.push(`${s.critical} of the ${s.total} alerts are critical and should be reviewed first.`);
-        }
-        out.push('An alert is recorded when a problem first appears or its reading changes, so a condition '
-            + 'that held steady may have continued after its last recorded alert.');
-
-        out.push('Alerts older than the retention period (24 hours by default) have already been removed, so this report covers at most that period.');
-        return out;
-    }
-
     const sevClass = (sev) => `rp-sev rp-sev-${sev.toLowerCase()}`;
 
     // "2460.81 m" never breaks between the number and its unit.
@@ -65,18 +45,23 @@
         return `<span class="rp-when">${esc(date)}<small>${esc(time)}</small></span>`;
     };
 
+    // Laid out exactly as report-pdf.js writes the file - the same sections
+    // in the same order with the same columns - so what is on screen is what
+    // the download will be.
     function header(info, s) {
         return `
         <div class="rp-header">
             <img class="rp-logo" src="${esc(LOGO_URL)}" alt="Logo" onerror="this.style.display='none'">
             <div class="rp-header-text">
+                <p class="rp-kicker">REAL-TIME DATA QC</p>
                 <h2>Alerts Summary Report</h2>
-                
-                ${s.total ? `<p class="rp-span">Period: ${esc(stamp(s.first))} &rarr; ${esc(stamp(s.last))}</p>` : ''}
+                ${info.preparedBy ? `<p class="rp-span">Prepared by ${esc(info.preparedBy)}</p>` : ''}
             </div>
         </div>
         <dl class="rp-info">
-    
+            <div><dt>Well</dt><dd>${esc(info.well)}</dd></div>
+            <div><dt>Base region</dt><dd>${esc(info.region || '-')}</dd></div>
+            <div><dt>Time Duration</dt><dd>${s.total ? `${esc(stamp(s.first))} to ${esc(stamp(s.last))}` : '-'}</dd></div>
         </dl>`;
     }
 
@@ -86,6 +71,7 @@
         return `
         ${header(info, s)}
 
+        <h3 class="rp-h">Summary</h3>
         <div class="rp-cards">
             <div><b>${s.total}</b><span>Total alerts</span></div>
             <div><b>${s.groups.length}</b><span>Alert types</span></div>
@@ -94,32 +80,28 @@
 
         <h3 class="rp-h">Alerts by type</h3>
         <table class="rp-table"><thead><tr>
-            <th>Severity</th><th>Alert</th><th class="rp-num">Count</th><th class="rp-num">Groups of<br>alerts</th>
-            <th>First alert</th><th>Last alert</th><th>Readings</th><th>Bit depth</th>
+            <th>Severity</th><th>Alert</th><th class="rp-num">Count</th>
+            <th class="rp-num">Groups of alerts</th><th class="rp-num">Time Duration</th>
         </tr></thead><tbody>
         ${s.groups.map((g) => `<tr>
             <td><span class="${sevClass(g.severity)}">${esc(g.severity)}</span></td>
-            <td class="rp-wrap">${esc(g.title)}${g.title === g.category ? '' : `<small>${esc(g.category)}</small>`}</td>
+            <td class="rp-wrap">${esc(g.title)}</td>
             <td class="rp-num">${g.count}</td><td class="rp-num">${g.episodes.length}</td>
-            <td>${when(g.first)}</td><td>${when(g.last)}</td>
-            <td>${unit(g.reading)}</td><td>${unit(g.bitDepth)}</td>
+            <td class="rp-num">${esc(formatDuration(g.duration))}</td>
         </tr>`).join('')}
         </tbody></table>
 
         <h3 class="rp-h">Timeline of alert groups</h3>
         <p class="rp-hint">Alerts of the same type less than ${ReportData.EPISODE_GAP_MINUTES} minutes apart are one group of alerts.</p>
         <table class="rp-table"><thead><tr>
-            <th>From</th><th>To</th><th>Duration</th><th>Severity</th><th>Alert</th><th class="rp-num">Alerts</th><th>Bit depth</th>
+            <th>First alert</th><th>Last alert</th><th>Span</th><th>Severity</th><th>Alert</th><th class="rp-num">Alerts</th><th>Bit depth</th>
         </tr></thead><tbody>
         ${s.timeline.map((e) => `<tr>
-            <td>${when(e.first)}</td><td>${when(e.last)}</td><td>${esc(duration(e.last - e.first))}</td>
+            <td>${when(e.first)}</td><td>${when(e.last)}</td><td>${esc(duration(e.duration))}</td>
             <td><span class="${sevClass(e.severity)}">${esc(e.severity)}</span></td>
             <td class="rp-wrap">${esc(e.title)}</td><td class="rp-num">${e.count}</td><td>${unit(e.bitDepth)}</td>
         </tr>`).join('')}
-        </tbody></table>
-
-        <h3 class="rp-h">Notes</h3>
-        <ul class="rp-notes">${info.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>`;
+        </tbody></table>`;
     }
 
 
@@ -182,6 +164,8 @@
     .rp-sev-critical{color:#ff6b6b}
     .rp-sev-warning{color:#f0b429}
     .rp-notes{margin:0;padding-left:18px;font-size:13px;line-height:1.55}
+
+    .rp-header-text p.rp-kicker{margin:0 0 4px;font-size:11px;font-weight:600;letter-spacing:.6px;opacity:.7}
 
     .rp-header-text p.rp-span {
         font-size: 13px;      /* change to taste: 12px smaller, 14px larger */
@@ -256,7 +240,6 @@
         }
         .rp-header-text h2 { font-size: 22px; color: #000 !important; }
         .rp-header-text p { font-size: 12px; color: #333 !important; }
-        .rp-header-text p.rp-well { font-size: 20px; font-weight: 400; color: #000 !important; margin: 8px 0 4px; }
 
         .rp-cards div { border: 1px solid #555 !important; background: #fff !important; }
         .rp-cards b { font-size: 26px; color: #000 !important; }
@@ -357,7 +340,6 @@
                 info = details();
                 info.region = region;          // overrides the form value
                 summary = ReportData.summarise(rows);
-                info.notes = notes(summary);
 
                 body.innerHTML = html(info, summary);
                 pdfBtn.disabled = false;

@@ -207,9 +207,21 @@ function isPureAppend(alerts) {
     return alerts[known.length - 1] === known[known.length - 1];
 }
 
+// The same alerts as _DURATION_ONLY in alerts_logic/constants.py.
+const DURATION_ONLY = new RegExp(
+    'has resumed \\(was 0 for \\d+ seconds\\)'
+    + '|Bit depth steady for \\d+ seconds \\(was jumping'
+    + '|resumed at [\\d:]+ - was 0 from'
+    + '|Bit depth steady again since',
+    'i',
+);
+
 async function load({ first = false } = {}) {
     const data = await api('/alerts/all/' + encodeURIComponent(WELL));
-    const alerts = (data.alerts || []).map(String);
+    // "RPM has resumed (was 0 for 60 seconds)" and the like are in the file
+    // for the report's Time Duration only, so they are left out here - the
+    // same as the card, which never receives them (see is_duration_only).
+    const alerts = (data.alerts || []).map(String).filter((a) => !DURATION_ONLY.test(a));
 
     if (first || !isPureAppend(alerts)) {
         renderAll(alerts);

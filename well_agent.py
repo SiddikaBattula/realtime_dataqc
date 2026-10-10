@@ -27,7 +27,8 @@ import well_rules
 from config import Config
 from logger import get_logger
 from mysql_client import MySQLClient
-from validation_realtime import alert_raised_at, build_validator
+from alerts_logic.constants import alert_raised_at
+from validation_realtime import build_validator
 
 log = get_logger(__name__)
 

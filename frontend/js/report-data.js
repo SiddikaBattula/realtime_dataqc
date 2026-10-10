@@ -18,11 +18,13 @@
   Zero values and bit-depth jumps are saved once, when they start, and closed
   by one more alert when they stop (activity_check.py, bit_depth_check.py):
 
-      RPM resumed at 14:22:10 - was 0 from 10-10-26 14:20:03 to 10-10-26 14:22:10 (127s), BD:2499.95m
-      Bit depth steady again since 14:31:44 - was jumping from 10-10-26 14:31:19 to 10-10-26 14:31:44 (25s), 3 jump(s), largest 8.01m
+      RPM has resumed (was 0 for 127 seconds), BD:2499.95m
+      Bit depth steady for 30 seconds (was jumping for 25 seconds, 3 jump(s), largest 8.01m)
 
-  A closing alert joins its opening alert's row, and its from/to is what the
-  timeline measures the condition by. It is not counted as an alert itself.
+  A closing alert joins its opening alert's row. The seconds in it say when
+  the condition started and ended - ended the moment it resumed, or for the
+  bit depth that many "steady" seconds before the alert - which is what the
+  report's Time Duration is measured by. It is not counted as an alert itself.
 
   So each shape has its own rule below. The rule names the problem without
   its numbers ("H2S above limit"), which is what groups a hundred readings of
@@ -44,20 +46,12 @@ const ReportData = (function () {
     const BD = new RegExp(`\\bBD\\s*:\\s*${N}\\s*([a-z]*)`, 'i');
     const MD = new RegExp(`\\bMD\\s*:\\s*${N}\\s*([a-z]*)`, 'i');
 
-    // "from 10-10-26 14:20:03 to 10-10-26 14:22:10" inside a closing alert.
-    const T = '(\\d{2})-(\\d{2})-(\\d{2}) (\\d{2}):(\\d{2}):(\\d{2})';
-    const SPAN = new RegExp(`from ${T} to ${T}`, 'i');
-
-    function spanOf(text) {
-        const m = SPAN.exec(text);
-        if (!m) return {};
-        const at = (i) => new Date(2000 + +m[i + 2], +m[i + 1] - 1, +m[i], +m[i + 3], +m[i + 4], +m[i + 5]);
-        return { from: at(1), to: at(7), closing: true };
-    }
 
     // [category, pattern, (match) => fields]. First match wins, so the more
-    // specific shapes come first. `title` is the problem without its numbers;
-    // `value`/`unit` is the reading worth reporting a range of.
+    // specific shapes come first. `title` is the alert as the dashboard card
+    // words it, with only its numbers left out ("RPM is 0", not "RPM is 0
+    // where BD:2500.36m"); `value`/`unit` is the reading worth reporting a
+    // range of.
     const RULES = [
         ['Out of range',
             new RegExp(`^(.+?)\\s*:\\s*${N}(\\S*?)\\s+(above|below) limit ${N}(\\S*)`, 'i'),
@@ -66,45 +60,55 @@ const ReportData = (function () {
                 value: +m[2], unit: m[3] || m[6], limit: +m[5],
             })],
 
-        // Titled like the "is 0 where" alert it closes, so the two share a row.
+        // Titled like the alert they close, so the two share a row. Only the
+        // report reads these; the card and Show Logs leave them out.
         ['Zero value',
-            /^(.+?) resumed at [\d:]+ - was 0 from \d/i,
-            (m, text) => ({ title: `${m[1]} reading 0`, ...spanOf(text) })],
+            new RegExp(`^(.+?) has resumed \\(was 0 for ${N} seconds\\)`, 'i'),
+            (m) => ({ title: `${m[1]} is 0`, closing: true, lasted: +m[2], quiet: 0 })],
 
         ['Bit depth jump',
-            /^Bit depth steady again since [\d:]+ - was jumping from \d/i,
-            (m, text) => ({ title: 'Bit depth jump', ...spanOf(text) })],
+            new RegExp(`^Bit depth steady for ${N} seconds \\(was jumping for ${N} seconds`, 'i'),
+            (m) => ({ title: 'Bit Depth jump', closing: true, lasted: +m[2], quiet: +m[1] })],
+
+        // The same two, as a test build on 10-10-26 worded them.
+        ['Zero value',
+            new RegExp(`^(.+?) resumed at [\\d:]+ - was 0 from .*?\\(${N}s\\)`, 'i'),
+            (m) => ({ title: `${m[1]} is 0`, closing: true, lasted: +m[2], quiet: 0 })],
+
+        ['Bit depth jump',
+            new RegExp(`^Bit depth steady again since [\\d:]+ - was jumping from .*?\\(${N}s\\)`, 'i'),
+            (m) => ({ title: 'Bit Depth jump', closing: true, lasted: +m[1], quiet: 30 })],
 
         ['Zero value',
             /^(.+?) is 0 where/i,
-            (m) => ({ title: `${m[1]} reading 0` })],
+            (m) => ({ title: `${m[1]} is 0` })],
 
         // The wording before "is 0 where", still in files from older agents.
         ['Zero value',
             /^(.+?) cannot be 0 in (.+?) where/i,
-            (m) => ({ title: `${m[1]} reading 0 while ${m[2].toUpperCase()}` })],
+            (m) => ({ title: `${m[1]} cannot be 0 in ${m[2].toUpperCase()}` })],
 
         ['Rate of penetration',
             new RegExp(`^(.+?) is ${N}(\\S*?)\\s*\\(Avg:\\s*${N}.*?threshold of ${N}%`, 'i'),
             (m) => ({
-                title: `${m[1]} above its rolling average by more than ${m[5]}%`,
+                title: `${m[1]} exceeds the configured threshold of ${m[5]}%`,
                 value: +m[2], unit: m[3],
             })],
 
         ['Rate of penetration',
             new RegExp(`^(.+?) increased by ${N}%`, 'i'),
-            (m) => ({ title: `${m[1]} increase`, value: +m[2], unit: '%' })],
+            (m) => ({ title: `${m[1]} increased`, value: +m[2], unit: '%' })],
 
         ['TA > TG',
             /^(.+?) is greater than (.+?) where/i,
-            (m) => ({ title: `${m[1]} greater than ${m[2]}` })],
+            (m) => ({ title: `${m[1]} is greater than ${m[2]}` })],
 
         ['Bit depth jump',
             new RegExp(`Bit Depth jump by ${N}\\s*([a-z]*)`, 'i'),
             (m, text) => {
                 const current = new RegExp(`current depth\\s*:\\s*${N}`, 'i').exec(text);
                 return {
-                    title: 'Bit depth jump',
+                    title: 'Bit Depth jump',
                     value: +m[1], unit: m[2] || 'm',
                     bd: current ? +current[1] : null,
                 };
@@ -112,37 +116,37 @@ const ReportData = (function () {
 
         ['Data feed',
             new RegExp(`data Trans\\.?\\s*(.+?) has remained unchanged for ${N} seconds`, 'i'),
-            (m) => ({ title: `${m[1]} unchanged - feed may be frozen`, value: +m[2], unit: 's' })],
+            (m) => ({ title: `Please check for data Trans. ${m[1]} has remained unchanged`, value: +m[2], unit: 's' })],
 
         ['Data feed',
             new RegExp(`Realtime data feed has stopped for the last ${N}`, 'i'),
-            (m) => ({ title: 'Real-time data feed stopped', value: +m[1], unit: 's' })],
+            (m) => ({ title: 'Realtime data feed has stopped', value: +m[1], unit: 's' })],
 
         ['Data feed',
-            new RegExp(`(.+?) is STILL unchanged at ${N} - stuck for ${N} min`, 'i'),
+            new RegExp(`^(?:Check in data feed\\.\\s*)?(.+?) is STILL unchanged at ${N} - stuck for ${N} min`, 'i'),
             (m) => ({
-                title: 'Real-time data feed still stopped (reminder)',
+                title: `Check in data feed. ${m[1]} is still unchanged`,
                 value: +m[3], unit: 'min',
             })],
 
         ['Data feed',
             new RegExp(`Realtime data feed has resumed.*?for ${N} seconds`, 'i'),
-            (m) => ({ title: 'Real-time data feed resumed', value: +m[1], unit: 's' })],
+            (m) => ({ title: 'Realtime data feed has resumed', value: +m[1], unit: 's' })],
 
         ['SPP vs pump rate',
             new RegExp(`^(.+?) out of range(?: from ${N}s)?`, 'i'),
             (m) => ({
-                title: `${m[1]} outside expected range for pump rate`,
+                title: `${m[1]} out of range`,
                 value: m[2] === undefined ? null : +m[2], unit: 's',
             })],
 
         ['Activity',
             /^Cannot determine activity/i,
-            () => ({ title: 'Activity could not be determined (depth missing)' })],
+            () => ({ title: 'Cannot determine activity' })],
 
         ['Activity',
             /^Unknown activity:\s*(.+)$/i,
-            (m) => ({ title: `Unknown activity "${m[1].trim()}"` })],
+            (m) => ({ title: `Unknown activity: ${m[1].trim()}` })],
     ];
 
     // Same tones the dashboard colours its rows with (shared.js), so a row
@@ -174,24 +178,28 @@ const ReportData = (function () {
         }
 
         if (!fields) {
-            // Unknown shape: numbers blanked so repeats still group together.
+            // Unknown shape: the sentence as the card shows it, less the bit
+            // depth on the end. Its numbers stay - masking them as "#" made
+            // rows nobody could read.
             fields = {
-                title: text.replace(/\s*(where\s+)?BD\s*:.*$/i, '')
-                    .replace(/-?\d+(\.\d+)?/g, '#').trim() || text,
+                title: text.replace(/[\s,]*(where\s+)?BD\s*:.*$/i, '').trim() || text,
             };
         }
 
         const tone = typeof classify === 'function' ? classify(text).tone : 'info';
 
-        const valid = (d) => d instanceof Date && !Number.isNaN(d.getTime());
-        const closing = Boolean(fields.closing) && valid(fields.from) && valid(fields.to);
+        const closing = Boolean(fields.closing) && Number.isFinite(fields.lasted);
+
+        // What the condition covered. A closing alert works it out back from
+        // its own time: it ended `quiet` seconds before the alert and lasted
+        // `lasted` seconds. Every other alert covers the moment it was raised.
+        const end = closing ? new Date(time - (fields.quiet || 0) * 1000) : time;
+        const start = closing ? new Date(end - fields.lasted * 1000) : time;
 
         return {
             time,
-            // What the condition covered: its own from/to for a closing alert,
-            // the moment it was raised for every other one.
-            start: closing ? fields.from : time,
-            end: closing ? fields.to : time,
+            start,
+            end,
             closing,
             text,
             category,
@@ -229,6 +237,24 @@ const ReportData = (function () {
         return `${h}h ${pad(m % 60)}m`;
     }
 
+    // The Time Duration of Alerts by type, to the second: "2h 57m 55s".
+    // `duration` above rounds off for the narrower timeline column.
+    function formatDuration(ms) {
+        const totalSeconds = Math.floor(ms / 1000);
+
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+
+        const parts = [];
+
+        if (hours) parts.push(`${hours}h`);
+        if (minutes) parts.push(`${minutes}m`);
+        if (seconds || parts.length === 0) parts.push(`${seconds}s`);
+
+        return parts.join(' ');
+    }
+
     // "12.40 - 98.10 ppm", "50 ppm", or "-" when there was nothing to show.
     function span(values, unit) {
         const v = values.filter((x) => x !== null);
@@ -255,7 +281,20 @@ const ReportData = (function () {
             if (r.end > current.last) current.last = r.end;
             current.rows.push(r);
         }
+
+        for (const ep of out) ep.duration = lastedOf(ep.rows, ep.last - ep.first);
         return out;
+    }
+
+    // How long a set of alerts was actually standing, in ms. Where closing
+    // alerts say how long each spell lasted ("was 0 for 60 seconds"), their
+    // seconds added up - two 1-minute spells ten minutes apart are 2 minutes,
+    // not the 11 between the first and the last. Otherwise `fallback`, the
+    // first to last alert, as for every other kind of alert.
+    function lastedOf(rows, fallback) {
+        const closing = rows.filter((r) => r.closing);
+        if (!closing.length) return fallback;
+        return closing.reduce((total, r) => total + (r.end - r.start), 0);
     }
 
     // ------------------------------------------------------------------
@@ -300,6 +339,8 @@ const ReportData = (function () {
                 severity: g.severity,
                 count: g.rows.filter((r) => !r.closing).length,
                 episodes,
+                // The "Time Duration" of Alerts by type, on screen and in the PDF.
+                duration: episodes.reduce((total, ep) => total + ep.duration, 0),
                 first: new Date(Math.min(...g.rows.map((r) => r.start))),
                 last: new Date(Math.max(...g.rows.map((r) => r.end))),
                 reading,
@@ -313,6 +354,7 @@ const ReportData = (function () {
         const timeline = list.flatMap((g) => g.episodes.map((ep) => ({
             first: ep.first,
             last: ep.last,
+            duration: ep.duration,
             title: g.title,
             category: g.category,
             severity: g.severity,
@@ -345,6 +387,7 @@ const ReportData = (function () {
         summarise,
         stamp,
         duration,
+        formatDuration,
         pad,
     };
 })();

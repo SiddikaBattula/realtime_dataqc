@@ -1,84 +1,14 @@
-# """
-# Check 6 - ROP.
+"""
+Check 6 - ROP.
 
-# Percentage move over ROP.duration_seconds, increase only - a drop to zero
-# is normal whenever the bit comes off bottom. Measured on the reading after
-# `factor`, so a rise means the bit is drilling faster and not that the raw
-# minutes-per-metre column went up.
-# """
+The reading, after `factor` (m/hr), against the average of the readings in
+the last ROP.duration_seconds. Alert when it is above that average plus
+ROP.percentage_change - added as m/hr, not as a percentage of the average.
+Increase only: a drop to zero is normal whenever the bit comes off bottom,
+and a reading of 0 clears the history so the next spell of drilling is
+measured from where it starts.
+"""
 
-
-# def run_rop_check(validator, normalized_data, raise_alert, date_str, bit_depth, depth_unit,rop_unit, now):
-#     rop_raw = normalized_data.get("ROP")
-#     rop = validator._in_limit_unit("ROP", rop_raw)
-
-#     rop_percentage = 0.0
-
-#     if rop_raw is not None and rop is None:
-#         # Not advancing - a connection or a trip. Nothing to compare, and
-#         # the baseline goes with it so the next spell of drilling is
-#         # measured from where it starts rather than from before the trip.
-#         validator.previous_rop = None
-#         validator.previous_rop_time = None
-#         return rop_percentage
-
-#     if rop is None:
-#         return rop_percentage
-
-#     current_time = now
-
-#     # First value
-#     if validator.previous_rop is None:
-#         validator.previous_rop = rop
-#         validator.previous_rop_time = current_time
-#         return rop_percentage
-
-#     # Prevent division by zero. ROP is legitimately 0 whenever the bit is
-#     # not advancing (tripping, connections, circulating), so without this
-#     # the next reading would divide by a zero baseline.
-#     if validator.previous_rop <= 0:
-#         validator.previous_rop = rop
-#         validator.previous_rop_time = current_time
-#         return rop_percentage
-
-#     elapsed = (current_time - validator.previous_rop_time).total_seconds()
-
-#     if elapsed < validator.rop_duration:
-#         return rop_percentage
-
-#     percent_change = ((rop - validator.previous_rop) / validator.previous_rop) * 100
-
-#     validator.log.debug("ROP %s -> %s over %.1fs = %.2f%%",
-#                          validator.previous_rop, rop, elapsed, percent_change)
-
-    
-#     if percent_change > validator.rop_threshold:
-#         raise_alert(
-#             f"[{date_str}] {validator.display_name('ROP')} increased by {percent_change:.2f}%({rop:.2f}{rop_unit}), BD:{bit_depth:.2f}{depth_unit}",
-#             "ROP",
-#             subject="ROP_CHANGE",
-#             value=f"increased {percent_change:.2f}",
-#             why=validator.alert_log.change_reason(
-#                 "ROP", validator.previous_rop, rop, elapsed,
-#                 percent_change, validator.rop_threshold,
-#                 validator.rop_duration, raw=rop_raw,
-#             ),
-#         )
-#     else:
-#         validator._last_alerted.pop("ROP_CHANGE", None)
-
-#     validator.previous_rop = rop
-#     validator.previous_rop_time = current_time
-
-#     rop_percentage = round(percent_change, 2)
-
-#     return rop_percentage
-
-
-
-
-
-from collections import deque
 
 def run_rop_check(
     validator,
@@ -104,14 +34,10 @@ def run_rop_check(
 
     current_time = now
 
-    # Initialize history if not already present
-    if not hasattr(validator, "rop_history"):
-        validator.rop_history = deque()
-
     # Add current reading
     validator.rop_history.append((current_time, rop))
 
-    validator.log.info(
+    validator.log.debug(
         "ROP SAMPLE ADDED | value=%s |history_size=%s",
         rop,
         len(validator.rop_history)
@@ -135,7 +61,7 @@ def run_rop_check(
 
     threshold_value = avg_rop + validator.rop_threshold
 
-    validator.log.info(
+    validator.log.debug(
         "ROP Avg=%.2f Current=%.2f Threshold=%.2f Duration=%ss",
         avg_rop,
         rop,
@@ -163,10 +89,15 @@ def run_rop_check(
             subject="ROP_CHANGE",
             value=f"{rop:.2f}",
             why=(
-                f"Current ROP {rop:.2f}{rop_unit} exceeded "
-                f"average ROP {avg_rop:.2f}{rop_unit} by "
-                f"{rop_percentage:.2f}% over the last "
-                f"{validator.rop_duration} seconds."
+                f"ROP {rop:.2f}{rop_unit} is above the {validator.rop_duration}s "
+                f"average {avg_rop:.2f}{rop_unit} ({len(values)} readings) + "
+                f"conditions[ROP].percentage_change {validator.rop_threshold} = "
+                f"{threshold_value:.2f}{rop_unit} - the setting is added as "
+                f"{rop_unit}, not as a percentage; {rop_percentage:.2f}% above "
+                f"the average; read {validator.alert_log.num(rop_raw)} from column "
+                f"{validator.mapper.column_for('ROP')}, factor "
+                f"{validator.ranges.get('ROP', {}).get('factor')} / "
+                f"{validator.alert_log.num(rop_raw)}"
             ),
         )
     else:

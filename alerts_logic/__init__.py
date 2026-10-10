@@ -3,20 +3,18 @@ alerts_logic
 ============
 
 Each realtime QC check lives in its own module here, one per check, so
-realtime_validator.py stays the orchestrator instead of growing every rule
+validation_realtime.py stays the orchestrator instead of growing every rule
 inline. Every check function takes the RealtimeValidator instance as its
-first argument (`validator`) and reads/writes its state exactly as the
-original inline code did - nothing about the checks themselves changed,
-only where the code lives:
+first argument (`validator`) and reads/writes its state on it:
 
-    activity_check.py    - check 1: activity + the activity zero-checks
-    range_check.py        - check 2: ranges (min/max)
-    ta_tg_check.py         - check 3: TA > TG
-    spp_check.py            - check 4: SPP vs SPM-derived factor
-    rop_check.py             - check 6: ROP percentage change
-    hookload_check.py         - check 7: HOOKLOAD stuck/unchanged
-    bit_depth_check.py         - depth-jump check
-    constants.py                 - shared constants + alert_raised_at
+    activity_check.py    - check 1: activity, the zero-checks, and "resumed"
+    range_check.py       - check 2: ranges (min/max)
+    ta_tg_check.py       - check 3: TA > TG
+    spp_check.py         - check 4: SPP against SPM x the learned ratio
+    rop_check.py         - check 5: ROP above its rolling average
+    hookload_check.py    - check 6: HOOKLOAD stuck/unchanged
+    bit_depth_check.py   - check 7: bit depth jumps, and "steady" again
+    constants.py         - shared constants, alert_raised_at, is_duration_only
 """
 
 from .activity_check import detect_activity, run_zero_checks

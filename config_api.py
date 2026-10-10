@@ -45,7 +45,7 @@ from config import (
 )
 import mailer
 
-from validation_realtime import alert_raised_at
+from alerts_logic.constants import alert_raised_at, is_duration_only
 from logger import setup_logging, get_logger
 from rule_files import RuleFileError
 
@@ -741,6 +741,10 @@ def get_well_alerts(
             detail=f"The alert file for '{database_name}' is not a list",
         )
 
+    # "RPM has resumed (was 0 for 60 seconds)" and the like are for the
+    # report's Time Duration only, which reads /alerts/all - not for the card.
+    alerts = [alert for alert in alerts if not is_duration_only(alert)]
+
     if max_age_minutes is not None:
         # Filtered here rather than in the page: the agent stamps every alert
         # with the clock this process reads back, so the two always agree about
@@ -886,23 +890,42 @@ def health():
 # ---------------------------------------------------------------------------
 # The dashboard
 #
-# Mounted last, and at "/", so every route above is matched first and only what
-# is left over is looked for on disk. Serving it from here rather than opening
-# the file directly is what keeps it on the same origin as the endpoints it
-# calls - no CORS, and one address to remember.
+# Registered last, so every API route above is matched first. Serving the pages
+# from here rather than opening the files directly is what keeps them on the
+# same origin as the endpoints they call - no CORS, and one address to remember.
+#
+# frontend/ is split by kind - html/, css/, js/ (with js/vendor/), images/ -
+# but the pages keep their addresses at the root: "/", "/login.html",
+# "/logs.html?well=...". Each page links its assets as "../css/...", which
+# from a page at the root is "/css/...", served by the mounts below - and the
+# same links work when frontend/ is opened from a plain static server.
 # ---------------------------------------------------------------------------
 
-if FRONTEND_DIR.is_dir():
+HTML_DIR = FRONTEND_DIR / "html"
+
+if HTML_DIR.is_dir():
 
     @app.get("/", include_in_schema=False)
     def dashboard():
-        return FileResponse(FRONTEND_DIR / "index.html")
+        return FileResponse(HTML_DIR / "index.html")
 
-    app.mount(
-        "/",
-        StaticFiles(directory=FRONTEND_DIR, html=True),
-        name="frontend",
-    )
+    @app.get("/{page}.html", include_in_schema=False)
+    def html_page(page: str):
+        # `page` cannot hold a "/", so this only ever looks inside html/.
+        path = HTML_DIR / f"{page}.html"
+
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="No such page")
+
+        return FileResponse(path)
+
+    for folder in ("css", "js", "images"):
+        if (FRONTEND_DIR / folder).is_dir():
+            app.mount(
+                f"/{folder}",
+                StaticFiles(directory=FRONTEND_DIR / folder),
+                name=f"frontend-{folder}",
+            )
 
 else:
     log.warning("No frontend/ directory at %s - dashboard not served", FRONTEND_DIR)
