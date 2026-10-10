@@ -6,9 +6,15 @@ well's drilling_criteria, then every parameter its activity block marks 1
 must be above 0.
 """
 
+from datetime import datetime
+
 from rule_files import DRILLING, NON_DRILLING
 
-from .constants import PUMPS
+from .constants import ALERT_TIME_FORMAT, PUMPS
+
+# The from/to times written inside a "resumed" alert. ":" rather than the
+# stamp's "-", so they cannot be mistaken for the "[...]" every alert starts with.
+SPAN_TIME_FORMAT = "%d-%m-%y %H:%M:%S"
 
 
 def detect_activity(validator, data, raise_alert, date_str):
@@ -63,6 +69,10 @@ def run_zero_checks(validator, activity, normalized_data, raise_alert,
     """
     Every parameter this activity's rule block marks mandatory (1) must be
     above 0 - e.g. SPM cannot be 0 while DRILLING.
+
+    The "is 0" alert is saved once, when it starts. A flag per parameter
+    remembers when that was, and on the first reading the parameter is no
+    longer 0 one "resumed" alert gives the time it came back.
     """
     rules = validator.activity_rules.get(activity)
 
@@ -79,6 +89,9 @@ def run_zero_checks(validator, activity, normalized_data, raise_alert,
         )
         validator.log.error("activity.json has no rule block for '%s'", activity)
         return
+
+    # The parameters that are 0 on this reading.
+    zero_now = set()
 
     for param, is_mandatory in rules.items():
 
@@ -102,6 +115,7 @@ def run_zero_checks(validator, activity, normalized_data, raise_alert,
                         f"({validator.alert_log.pump_breakdown(normalized_data, PUMPS)})"
                     ),
                 )
+                zero_now.add(param)
 
             continue
 
@@ -117,3 +131,57 @@ def run_zero_checks(validator, activity, normalized_data, raise_alert,
                 value=activity,
                 why=validator.alert_log.zero_reason(param, activity, value),
             )
+            zero_now.add(param)
+
+    _report_resumed(
+        validator, zero_now, raise_alert, date_str, bit_depth, depth_unit,
+        normalized_data, total_spm,
+    )
+
+
+def _report_resumed(validator, zero_now, raise_alert, date_str, bit_depth,
+                    depth_unit, normalized_data, total_spm):
+    """
+    Keep each parameter's "is 0" flag, and say when it resumed.
+
+    `_zero_since` is param -> when it was first 0. A parameter that is 0 now
+    and has no flag gets one; one that has a flag and is not 0 any more has
+    resumed - one alert with the resume time, and the flag is dropped, so the
+    next time it reads 0 is a new alert with a new start.
+
+    Resumed means the value is above 0 again, not just that it is no longer
+    checked: RPM that is 0 when the rig goes from DRILLING to NON DRILLING
+    is still 0, and keeps its flag until it reads above 0.
+    """
+    now = datetime.strptime(date_str, ALERT_TIME_FORMAT)
+    zero_since = validator.__dict__.setdefault("_zero_since", {})
+
+    for param in zero_now:
+        zero_since.setdefault(param, now)
+
+    for param in [p for p in zero_since if p not in zero_now]:
+        value = total_spm if param == "SPM" else normalized_data.get(param)
+
+        if value is None or value <= 0:
+            continue
+
+        since = zero_since.pop(param)
+        seconds = int((now - since).total_seconds())
+        name = validator.display_name(param)
+
+        validator.log.info(
+            "ZERO:%s RESUMED | was 0 from %s to %s (%ss)",
+            param, since.strftime("%H:%M:%S"), now.strftime("%H:%M:%S"), seconds,
+        )
+
+        where = f", BD:{bit_depth:.2f}{depth_unit}" if bit_depth is not None else ""
+
+        raise_alert(
+            f"[{date_str}] {name} resumed at {now.strftime('%H:%M:%S')} - "
+            f"was 0 from {since.strftime(SPAN_TIME_FORMAT)} "
+            f"to {now.strftime(SPAN_TIME_FORMAT)} ({seconds}s){where}",
+            param,
+            subject=f"RESUMED:{param}",
+            value=since.timestamp(),
+            why=f"{param} was 0 from {since} and is not 0 on this reading",
+        )

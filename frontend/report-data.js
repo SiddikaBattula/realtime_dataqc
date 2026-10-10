@@ -16,10 +16,10 @@
       Please check for data Trans. Hookload has remained unchanged for 30 seconds
 
   Zero values and bit-depth jumps are saved once, when they start, and closed
-  by one more alert when they stop (alerts_logic/episode_tracker.py):
+  by one more alert when they stop (activity_check.py, bit_depth_check.py):
 
-      RPM was 0 in DRILLING from 10-10-26 14:20:03 to 10-10-26 14:22:10 (127s), now 60.00, BD:2499.95m
-      Bit depth was jumping from 10-10-26 14:31:19 to 10-10-26 14:31:44 (25s), 3 jump(s), largest 8.01m, now steady
+      RPM resumed at 14:22:10 - was 0 from 10-10-26 14:20:03 to 10-10-26 14:22:10 (127s), BD:2499.95m
+      Bit depth steady again since 14:31:44 - was jumping from 10-10-26 14:31:19 to 10-10-26 14:31:44 (25s), 3 jump(s), largest 8.01m
 
   A closing alert joins its opening alert's row, and its from/to is what the
   timeline measures the condition by. It is not counted as an alert itself.
@@ -68,11 +68,11 @@ const ReportData = (function () {
 
         // Titled like the "is 0 where" alert it closes, so the two share a row.
         ['Zero value',
-            /^(.+?) was 0 in (.+?) from \d/i,
+            /^(.+?) resumed at [\d:]+ - was 0 from \d/i,
             (m, text) => ({ title: `${m[1]} reading 0`, ...spanOf(text) })],
 
         ['Bit depth jump',
-            /^Bit depth was jumping from \d/i,
+            /^Bit depth steady again since [\d:]+ - was jumping from \d/i,
             (m, text) => ({ title: 'Bit depth jump', ...spanOf(text) })],
 
         ['Zero value',
