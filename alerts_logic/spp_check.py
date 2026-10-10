@@ -238,7 +238,7 @@ def run_spp_check(validator, normalized_data, data_str, raise_alert, spp_unit, s
     upper_limit = calculated_spp + (calculated_spp * input_factor)
     lower_limit = calculated_spp - (calculated_spp * input_factor)
 
-    validator.log.warning(
+    validator.log.info(
         "COMPARE | Factor=%.4f | Calculated SPP=%.4f | "
         "Current SPP=%.4f | Upper=%.4f | Lower=%.4f",
         validator.spp_spm_factor,

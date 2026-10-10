@@ -162,6 +162,9 @@ class WellAgent:
 
                     self.save_alerts(result.alerts)
 
+                # Every read, changed row or not: a frozen feed is exactly the
+                # case where no new row ever arrives to trigger an update.
+                self._publish_feed()
                 # Every successful read, not just a changed one: after a
                 # reconnect the row may not have moved yet, and the dashboard
                 # should get the activity back without waiting for it to.
@@ -175,9 +178,14 @@ class WellAgent:
                 # agent looping on a socket that can no longer answer.
                 self._report_failure(exc)
 
+                # Every read, changed row or not: a frozen feed is exactly the
+                # case where no new row ever arrives to trigger an update.
+                self._publish_feed()
+
                 # Not reading, so not knowing: a stale DRILLING on the card
                 # would say the rig is on bottom when nobody can see it.
                 well_registry.set_activity(self.database_name, None)
+                well_registry.set_feed(self.database_name, "down", None)
 
                 # Only when the rig itself is gone. A check that raised says
                 # nothing about the depths just read, which stay on the card.
@@ -194,6 +202,21 @@ class WellAgent:
 
         self._disconnect()
 
+
+    def _publish_feed(self):
+        """Tell the dashboard whether new rows are still arriving."""
+        if self._last_new_row is None:
+            idle = 0
+        else:
+            idle = time.monotonic() - self._last_new_row
+
+        stale = idle >= Config.STALE_ROW_SECONDS
+
+        well_registry.set_feed(
+            self.database_name,
+            "stale" if stale else "live",
+            int(idle),
+        )
     # ------------------------------------------------------------------
     def _heartbeat(self):
         """

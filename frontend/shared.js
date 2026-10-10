@@ -164,10 +164,9 @@ function parseAlert(raw) {
 */
 const KINDS = [
     // [/Please check for data Trans/i, 'critical'],
-    [/Please check the data field/i, 'critical'],
-    [/increased by/i, 'critical'],
+    [/which exceeds the configured threshold of/i, 'critical'],    /** ROP increase by         alert */
     [/Bit Depth jump by/i, 'critical'],
-    [/Realtime data feed has stopped/i, 'critical'],
+    [/Realtime data feed has stopped/i, 'critical'],               /** Hookload is unchange    alert */
     [/Cannot determine activity/i, 'critical'],
     [/Unknown activity/i, 'critical'],
     [/remained unchanged/i, 'warn'],

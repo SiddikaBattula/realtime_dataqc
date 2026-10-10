@@ -192,6 +192,7 @@ class Config:
     DASHBOARD_CARD_MIN_HEIGHT = int(os.getenv("DASHBOARD_CARD_MIN_HEIGHT", "90"))
     DASHBOARD_CARD_MAX_HEIGHT = int(os.getenv("DASHBOARD_CARD_MAX_HEIGHT", "900"))
     DASHBOARD_CARD_MAX_COLUMNS = int(os.getenv("DASHBOARD_CARD_MAX_COLUMNS", "4"))
+    
 
 
 # ===========================================================================

@@ -34,7 +34,7 @@ _ACTIVITY = {}
 # cleared the same way when the rig cannot be reached.
 _DEPTHS = {}
 
-
+_FEED = {}
 def load_saved():
     """Bring back every well on disk. Returns how many."""
     with _LOCK:
@@ -109,6 +109,7 @@ def remove(database_name):
         existed = _WELLS.pop(database_name, None) is not None
         _ACTIVITY.pop(database_name, None)
         _DEPTHS.pop(database_name, None)
+        _FEED.pop(database_name, None)
 
     well_rules.delete(database_name)
 
@@ -137,6 +138,17 @@ def set_activity(database_name, activity):
         if database_name in _WELLS:
             _ACTIVITY[database_name] = activity
 
+
+def set_feed(database_name, feed, seconds=None):
+    """
+    Record whether a well's data is still arriving.
+
+    feed is "live", "stale" (rig answers but no new row) or "down" (rig
+    unreachable). Ignored for a removed well, like set_activity.
+    """
+    with _LOCK:
+        if database_name in _WELLS:
+            _FEED[database_name] = {"feed": feed, "seconds": seconds}
 
 def set_depths(database_name, bit_depth, total_depth, unit=""):
     """
@@ -173,6 +185,8 @@ def summaries():
                 "bit_depth": _DEPTHS.get(name, {}).get("bit_depth"),
                 "total_depth": _DEPTHS.get(name, {}).get("total_depth"),
                 "depth_unit": _DEPTHS.get(name, {}).get("unit", ""),
+                "feed": _FEED.get(name, {}).get("feed"),
+                "feed_stale_seconds": _FEED.get(name, {}).get("seconds"),
             }
             for name, record in _WELLS.items()
         }

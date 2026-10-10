@@ -179,7 +179,7 @@ def run_hookload_check(validator, normalized_data, raise_alert, date_str, now):
 
     if since_alert >= REALERT_SECONDS:
         message = (
-            f"[{date_str}] Check in data feed. {name} is STILL unchanged "
+            f"[{date_str}] Check in data feed. {name} is still unchanged "
             f"at {hookload} - stuck for {int(elapsed // 60)} min"
         )
         validator.hookload_last_alert_time = now

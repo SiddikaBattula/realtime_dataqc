@@ -1,5 +1,5 @@
 {
-    "database_name": "dk-1171",
+    "database_name": "dk-1233",
     "ip_address": "43.241.39.241",
     "region": "",
     "rules": {
@@ -207,13 +207,13 @@
             },
             "ROP": {
                 "min": 0,
-                "max": 100,
+                "max": 166.28,
                 "unit": "m/hr",
                 "factor": 60
             },
             "HOOKLOAD": {
                 "min": 10,
-                "max": 334.75,
+                "max": 200,
                 "unit": "kflb",
                 "factor": 2.268
             },

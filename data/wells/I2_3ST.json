@@ -1,5 +1,5 @@
 {
-    "database_name": "dk-1171",
+    "database_name": "I2_3ST",
     "ip_address": "43.241.39.241",
     "region": "",
     "rules": {
@@ -213,7 +213,7 @@
             },
             "HOOKLOAD": {
                 "min": 10,
-                "max": 334.75,
+                "max": 200,
                 "unit": "kflb",
                 "factor": 2.268
             },
